@@ -250,8 +250,8 @@ Tool allow-list for all agents:
 
 ### Commands
 
-- `/reset` in main channel — stops main process, clears session, restarts
-- `/reset {agent}` — clears sub-agent session (next message starts fresh)
+- `/clear` in main channel — stops main process, clears session, restarts
+- `/clear {agent}` — clears sub-agent session (next message starts fresh)
 
 ## Session Persistence
 

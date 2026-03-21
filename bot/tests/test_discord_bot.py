@@ -45,12 +45,12 @@ async def test_handle_reset_main(bot: AssistantBot) -> None:
     msg = MagicMock()
     msg.channel.id = 100
     msg.channel.send = AsyncMock()
-    msg.content = "/reset"
+    msg.content = "/clear"
     bot._main_process = MagicMock()
     bot._main_process.stop = AsyncMock()
     # Patch _start_main_agent to avoid spawning real process
     bot._start_main_agent = AsyncMock()
-    await bot._handle_reset(msg, "/reset")
+    await bot._handle_reset(msg, "/clear")
     bot.sessions.delete.assert_called_with("main")
     bot._start_main_agent.assert_called_once()
 
@@ -60,8 +60,8 @@ async def test_handle_reset_agent(bot: AssistantBot) -> None:
     msg = MagicMock()
     msg.channel.id = 200
     msg.channel.send = AsyncMock()
-    msg.content = "/reset journalist"
-    await bot._handle_reset(msg, "/reset journalist")
+    msg.content = "/clear journalist"
+    await bot._handle_reset(msg, "/clear journalist")
     bot.sessions.delete.assert_called_with("journalist")
 
 
@@ -70,5 +70,5 @@ async def test_handle_reset_unknown_agent(bot: AssistantBot) -> None:
     msg = MagicMock()
     msg.channel.id = 200
     msg.channel.send = AsyncMock()
-    await bot._handle_reset(msg, "/reset nonexistent")
+    await bot._handle_reset(msg, "/clear nonexistent")
     msg.channel.send.assert_called_with("Unknown agent: nonexistent")

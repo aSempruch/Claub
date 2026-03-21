@@ -108,7 +108,7 @@ class AssistantBot:
         channel_id = str(message.channel.id)
         content = message.content.strip()
 
-        if content.startswith("/reset"):
+        if content.startswith("/clear"):
             await self._handle_reset(message, content)
             return
 
@@ -237,7 +237,7 @@ class AssistantBot:
         channel_id = str(message.channel.id)
 
         if len(parts) >= 2:
-            # Explicit agent name: /reset <agent>
+            # Explicit agent name: /clear <agent>
             agent_name = parts[1]
         else:
             # Infer from channel
