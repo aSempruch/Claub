@@ -87,6 +87,12 @@ agents:
         prompt: "Check the latest tech news"
 ```
 
+### Agent Context
+
+Each agent's identity is defined by a markdown file in `claude/home/.claude/agents/` (e.g. `main.md`, `journalist.md`). These are passed to Claude via `--agent {name}` and serve as the agent's system prompt. They are tracked in git as part of the project configuration.
+
+Each agent also gets a workspace directory at `claude/workspaces/{name}/`. These are **runtime scratch directories** — gitignored and created automatically. Agents can write files, create their own `CLAUDE.md`, or store data there as they see fit. Do not rely on workspace contents being present across fresh clones.
+
 ### Adding a New Agent
 
 1. Add entry to `claude/config/agents.yaml` with `channel_id` and optional `schedule`
