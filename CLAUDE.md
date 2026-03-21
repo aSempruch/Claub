@@ -157,6 +157,25 @@ Integration tests (require real Claude CLI auth):
 CLAUDE_INTEGRATION_TEST=1 uv run --extra dev pytest tests/test_integration.py -v
 ```
 
+### Testing Claude CLI Directly
+
+To test how agents behave, permissions, MCP access, etc. without running the full bot, use the isolated HOME:
+
+```bash
+# Test a one-shot sub-agent
+HOME=claude/home claude -p --agent journalist --permission-mode acceptEdits \
+  --mcp-config claude/config/mcp.json -- "check the latest AI news"
+
+# Test the main agent interactively
+HOME=claude/home claude --agent main --permission-mode acceptEdits \
+  --mcp-config claude/config/mcp.json
+
+# Quick auth check
+HOME=claude/home claude -p --no-session-persistence "say hello"
+```
+
+If auth fails, re-symlink credentials: `ln -sf ~/.claude/.credentials.json claude/home/.claude/.credentials.json`
+
 ### Key Design Decisions
 
 - **Lazy init**: Main agent process starts without blocking on init event — session ID captured from first response
