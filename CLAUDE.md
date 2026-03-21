@@ -187,6 +187,16 @@ scripts/ctl.sh uninstall # Stop and remove the plist entirely
 
 Logs are at `~/Library/Logs/claub/` (`stdout.log` and `stderr.log`).
 
+## Deploying Changes
+
+After completing a feature or bug fix (not every individual edit, but once the work is done), restart the bot so changes take effect:
+
+```bash
+scripts/ctl.sh restart
+```
+
+This applies to changes in bot code (`bot/`), agent prompts (`config/agents/`), global config (`config/CLAUDE.md`), and permissions (`config/settings.json`).
+
 ## Development
 
 ### Running Tests
