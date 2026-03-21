@@ -162,16 +162,25 @@ CLAUDE_INTEGRATION_TEST=1 uv run --extra dev pytest tests/test_integration.py -v
 To test how agents behave, permissions, MCP access, etc. without running the full bot, use the isolated HOME:
 
 ```bash
-# Test a one-shot sub-agent
-HOME=claude/home claude -p --agent journalist --permission-mode acceptEdits \
-  --mcp-config claude/config/mcp.json -- "check the latest AI news"
-
-# Test the main agent interactively
-HOME=claude/home claude --agent main --permission-mode acceptEdits \
-  --mcp-config claude/config/mcp.json
-
 # Quick auth check
 HOME=claude/home claude -p --no-session-persistence "say hello"
+```
+
+To run an agent exactly as the bot would (same HOME, workspace, MCP, and permissions), set `REPO` and `cd` into the agent's workspace. The bot spawns each process with `cwd` set to the workspace:
+
+```bash
+REPO=$(pwd)  # run from repo root
+
+# Interactive main agent session
+cd $REPO/claude/workspaces/main
+HOME=$REPO/claude/home claude --agent main --permission-mode acceptEdits \
+  --mcp-config $REPO/claude/config/mcp.json --no-session-persistence
+
+# One-shot sub-agent (e.g. journalist)
+cd $REPO/claude/workspaces/journalist
+HOME=$REPO/claude/home claude -p --agent journalist --permission-mode acceptEdits \
+  --mcp-config $REPO/claude/config/mcp.json --no-session-persistence \
+  -- "check the latest AI news"
 ```
 
 If auth fails, re-symlink credentials: `ln -sf ~/.claude/.credentials.json claude/home/.claude/.credentials.json`
