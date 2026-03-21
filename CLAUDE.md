@@ -11,8 +11,10 @@ echo 'export DISCORD_BOT_TOKEN="your-token"' > bot/.envrc
 # Symlink Claude credentials into the isolated home
 ln -s ~/.claude/.credentials.json home/.claude/.credentials.json
 
-# Install and run
-cd bot && uv sync && uv run claude-assistant
+# Install deps and register the launchd service
+cd bot && uv sync && cd ..
+scripts/ctl.sh install
+scripts/ctl.sh start
 ```
 
 ## Architecture
@@ -71,6 +73,11 @@ home/.claude/                     # Isolated HOME for Claude processes (symlinks
   settings.json → ../../config/settings.json
   CLAUDE.md → ../../config/CLAUDE.md
   .credentials.json → ~/.claude/.credentials.json (gitignored)
+
+scripts/                          # Service management
+  run.sh                          # Wrapper for launchd — loads env, runs bot
+  ctl.sh                          # Service control (install/start/stop/restart/logs/status)
+  com.asempruch.claub.plist       # launchd plist template (paths filled at install)
 
 workspaces/                       # Runtime scratch dirs per agent (gitignored)
 data/                             # sessions.json — session ID persistence (gitignored)
@@ -152,6 +159,28 @@ Tool allow-list for all agents:
 ## Session Persistence
 
 Session IDs are stored in `data/sessions.json` (agent name → session UUID). On startup or message send, the bot passes `--resume {session_id}` to maintain conversation context. If resume fails, the session is cleared and a fresh one starts.
+
+## Service Management
+
+The bot runs as a macOS launchd service (`com.asempruch.claub`). It starts on login and auto-restarts on crash. The service is already installed — after code changes, just restart:
+
+```bash
+scripts/ctl.sh restart   # The command you'll use 99% of the time
+```
+
+Other commands (rarely needed):
+
+```bash
+scripts/ctl.sh status    # Print service state
+scripts/ctl.sh logs      # Last 50 lines of stdout + stderr
+scripts/ctl.sh logs -f   # Tail logs live
+scripts/ctl.sh stop      # Unload the service
+scripts/ctl.sh start     # Load and start the service
+scripts/ctl.sh install   # Re-template plist (only after changing the plist template)
+scripts/ctl.sh uninstall # Stop and remove the plist entirely
+```
+
+Logs are at `~/Library/Logs/claub/` (`stdout.log` and `stderr.log`).
 
 ## Development
 
