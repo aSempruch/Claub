@@ -26,7 +26,7 @@ AssistantBot (discord.py)
     ├─ Router ──► maps channel ID → "main" or agent name
     │
     ├─ Main Agent (MainAgentProcess)
-    │   └─ Long-running `claude --input-format stream-json --output-format stream-json`
+    │   └─ Long-running `claude --agent main --input-format stream-json --output-format stream-json`
     │   └─ Communicates via stdin/stdout JSON events
     │   └─ Supervised — auto-restarts on crash
     │
@@ -61,11 +61,12 @@ claude/                           # Claude CLI configuration
     agents.yaml                   # Agent definitions, channel IDs, cron schedules
     mcp.json                      # MCP server config (e.g. Playwright)
   home/.claude/                   # Isolated HOME for Claude processes
+    CLAUDE.md                     # Global agent guidelines (applies to all agents)
     settings.json                 # Tool permissions (allow list)
     agents/                       # Agent system prompts (markdown)
       main.md
       journalist.md
-    .credentials.json             # Symlink → ~/.claude/.credentials.json
+    .credentials.json             # Symlink → ~/.claude/.credentials.json (gitignored)
   workspaces/                     # Runtime scratch dirs per agent (gitignored)
   data/
     sessions.json                 # Session ID persistence (gitignored)
@@ -198,3 +199,7 @@ If auth fails, re-symlink credentials: `ln -sf ~/.claude/.credentials.json claud
 Core: `discord.py`, `apscheduler`, `pyyaml`, `python-dotenv`
 Dev: `pytest`, `pytest-asyncio`
 Build: `hatchling`
+
+## Branching
+
+Development happens on the `develop` branch. The `main` branch holds the clean initial commit.
