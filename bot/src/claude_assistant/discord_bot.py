@@ -25,12 +25,14 @@ class AssistantBot:
         workspaces_dir: Path,
         session_store: SessionStore,
         mcp_config: Path | None = None,
+        agents_dir: Path | None = None,
     ) -> None:
         self.config = config
         self.home_dir = home_dir
         self.workspaces_dir = workspaces_dir
         self.sessions = session_store
         self.mcp_config = mcp_config
+        self.agents_dir = agents_dir
         self.router = Router(config)
 
         self._agent_locks: dict[str, asyncio.Lock] = {
@@ -66,8 +68,8 @@ class AssistantBot:
         workspace = self.workspaces_dir / "main"
         workspace.mkdir(parents=True, exist_ok=True)
         self._main_process = MainAgentProcess(
-            home_dir=self.home_dir, workspace=workspace, mcp_config=self.mcp_config,
-            agent_name="main",
+            home_dir=self.home_dir, workspace=workspace,
+            mcp_configs=self._mcp_configs_for("main"), agent_name="main",
         )
         session_id = self.sessions.get("main")
         try:
@@ -152,7 +154,7 @@ class AssistantBot:
             agent_name=agent_name,
             home_dir=self.home_dir,
             workspace=workspace,
-            mcp_config=self.mcp_config,
+            mcp_configs=self._mcp_configs_for(agent_name),
         )
 
         async with message.channel.typing():
@@ -196,7 +198,7 @@ class AssistantBot:
             agent_name=agent_name,
             home_dir=self.home_dir,
             workspace=workspace,
-            mcp_config=self.mcp_config,
+            mcp_configs=self._mcp_configs_for(agent_name),
         )
 
         async with lock:
@@ -247,6 +249,17 @@ class AssistantBot:
             )
 
     # --- Utilities ---
+
+    def _mcp_configs_for(self, agent_name: str) -> list[Path]:
+        """Build MCP config list: shared + per-agent if it exists."""
+        configs: list[Path] = []
+        if self.mcp_config:
+            configs.append(self.mcp_config)
+        if self.agents_dir:
+            per_agent = self.agents_dir / f"{agent_name}.mcp.json"
+            if per_agent.exists():
+                configs.append(per_agent)
+        return configs
 
     async def _notify_main(self, text: str) -> None:
         channel = self._client.get_channel(int(self.config.main_channel_id))

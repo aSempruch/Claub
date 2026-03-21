@@ -20,7 +20,7 @@ log = logging.getLogger("claude_assistant")
 logging.getLogger("claude_assistant.claude_process").setLevel(logging.DEBUG)
 
 
-def _resolve_paths() -> tuple[Path, Path, Path, Path, Path]:
+def _resolve_paths() -> tuple[Path, Path, Path, Path, Path, Path]:
     """Resolve project paths relative to this file or env vars."""
     project_root = Path(os.environ.get(
         "CLAUDE_ASSISTANT_ROOT",
@@ -32,6 +32,7 @@ def _resolve_paths() -> tuple[Path, Path, Path, Path, Path]:
         project_root / "workspaces",
         project_root / "data" / "sessions.json",
         project_root / "config" / "mcp.json",
+        project_root / "config" / "agents",
     )
 
 
@@ -45,7 +46,7 @@ def main() -> None:
         log.error("DISCORD_BOT_TOKEN environment variable is required")
         sys.exit(1)
 
-    config_path, home_dir, workspaces_dir, sessions_path, mcp_config = _resolve_paths()
+    config_path, home_dir, workspaces_dir, sessions_path, mcp_config, agents_dir = _resolve_paths()
 
     if not config_path.exists():
         log.error("Config not found: %s", config_path)
@@ -60,6 +61,7 @@ def main() -> None:
         workspaces_dir=workspaces_dir,
         session_store=sessions,
         mcp_config=mcp_config if mcp_config.exists() else None,
+        agents_dir=agents_dir if agents_dir.exists() else None,
     )
 
     log.info("Starting claude-assistant")
