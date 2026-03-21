@@ -103,6 +103,8 @@ agents:
         prompt: "Check the latest tech news"
 ```
 
+> **Note:** Do not add `[scheduled]` to cron prompts in `agents.yaml` — the bot prefixes it automatically at runtime (see `scheduler.py`).
+
 ### Agent Context
 
 Agent behavior is configured at two levels:

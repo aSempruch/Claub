@@ -1,9 +1,0 @@
-discord:
-  main_channel_id: "1469300886605140080"
-
-agents:
-  journalist:
-    channel_id: "1469707538659414201"
-    schedule:
-      - cron: "0 9 * * *"
-        prompt: "Check the latest tech and AI news. Summarize the top 5 most interesting stories with links."

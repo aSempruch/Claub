@@ -16,6 +16,7 @@ home/.claude/mcp-needs-auth-cache.json
 home/.claude/telemetry/
 home/.npm/
 home/Library/
+config/
 data/sessions.json
 workspaces/
 .playwright-mcp/
