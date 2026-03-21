@@ -226,27 +226,31 @@ class AssistantBot:
 
     async def _handle_reset(self, message: discord.Message, content: str) -> None:
         parts = content.split()
-        if len(parts) == 1:
-            channel_id = str(message.channel.id)
-            if channel_id != self.config.main_channel_id:
-                await message.channel.send(
-                    "Use /reset in the main channel, or /reset <agent> to reset a sub-agent."
-                )
-                return
-            if self._main_process:
-                await self._main_process.stop()
-            self.sessions.delete("main")
-            await self._start_main_agent()
-            await message.channel.send("Main agent reset.")
-        else:
+        channel_id = str(message.channel.id)
+
+        if len(parts) >= 2:
+            # Explicit agent name: /reset <agent>
             agent_name = parts[1]
-            if agent_name not in self.config.agents:
-                await message.channel.send(f"Unknown agent: {agent_name}")
+        else:
+            # Infer from channel
+            route_type, agent_name = self.router.route(channel_id)
+            if route_type == "main":
+                if self._main_process:
+                    await self._main_process.stop()
+                self.sessions.delete("main")
+                await self._start_main_agent()
+                await message.channel.send("Main agent reset.")
                 return
-            self.sessions.delete(agent_name)
-            await message.channel.send(
-                f"Agent `{agent_name}` session cleared. Next message starts fresh."
-            )
+            if route_type is None:
+                return
+
+        if not agent_name or agent_name not in self.config.agents:
+            await message.channel.send(f"Unknown agent: {agent_name}")
+            return
+        self.sessions.delete(agent_name)
+        await message.channel.send(
+            f"Agent `{agent_name}` session cleared. Next message starts fresh."
+        )
 
     # --- Utilities ---
 

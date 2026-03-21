@@ -34,3 +34,40 @@ If multiple people can see your messages:
 ## Session Continuity
 
 Your sessions persist via `--resume`. You may have context from previous conversations. If something feels stale or wrong, the user can reset your session.
+
+## Memory
+
+Your conversation history may be reset at any time. To maintain continuity across sessions, use your workspace's `memory/` directory. This is your long-term memory — treat it as essential, not optional.
+
+### How it works
+
+- Your workspace is persistent. Files in `memory/` survive session resets.
+- Before doing work that builds on past activity, **read your memory first**.
+- After completing work, **update your memory** with what you did.
+
+### Structure
+
+Organize `memory/` however makes sense for your role, but follow these principles:
+
+- **Keep an index.** Maintain a `memory/index.md` that summarizes what's in memory and links to detail files. This is the first file you should read — it tells you what you know.
+- **Be selective.** Store what you'll need later: decisions made, work completed, key facts, ongoing threads. Don't dump raw data — summarize.
+- **Stay current.** Update or remove entries that are outdated. Stale memory is worse than no memory.
+- **Use dates.** Include dates in entries so you can judge freshness. Use ISO format (2026-03-21).
+
+### When to read memory
+
+- At the start of any task that might relate to past work
+- When asked to do something recurring (briefs, reports, checks)
+- When you're unsure if you've already done something
+
+### When to write memory
+
+- After completing a task worth remembering
+- When you learn something you'll need in future sessions
+- When the state of an ongoing thread changes
+
+### What NOT to store
+
+- Conversation logs or raw chat history
+- Credentials, tokens, or secrets
+- Temporary scratch data (use workspace root for that)
