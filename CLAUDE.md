@@ -9,7 +9,7 @@ A Discord bot that bridges Discord channels to Claude Code CLI sessions. A persi
 echo 'export DISCORD_BOT_TOKEN="your-token"' > bot/.envrc
 
 # Symlink Claude credentials into the isolated home
-ln -s ~/.claude/.credentials.json claude/home/.claude/.credentials.json
+ln -s ~/.claude/.credentials.json home/.claude/.credentials.json
 
 # Install and run
 cd bot && uv sync && uv run claude-assistant
@@ -38,11 +38,21 @@ AssistantBot (discord.py)
         └─ Fires sub-agents on cron schedules
 ```
 
-All Claude processes run with an **isolated HOME** (`claude/home/`) — separate from the user's real `~/.claude`. Credentials are symlinked from the real home.
+All Claude processes run with an **isolated HOME** (`home/`) — separate from the user's real `~/.claude`. Credentials are symlinked from the real home.
 
 ## Project Structure
 
 ```
+config/                           # All user-editable configuration
+  agents.yaml                     # Agent definitions, channel IDs, cron schedules
+  mcp.json                        # Shared MCP server config (e.g. Playwright)
+  settings.json                   # Claude tool permissions (allow list)
+  CLAUDE.md                       # Global agent guidelines (applies to all agents)
+  agents/                         # Agent system prompts and per-agent MCP configs
+    main.md                       # Main agent system prompt
+    journalist.md                 # Journalist agent system prompt
+    journalist.mcp.json           # Optional per-agent MCP config
+
 bot/                              # Python package (discord bot)
   pyproject.toml                  # deps: discord.py, apscheduler, pyyaml, python-dotenv
   src/claude_assistant/
@@ -56,23 +66,19 @@ bot/                              # Python package (discord bot)
     chunker.py                    # Splits long messages for Discord's 2000-char limit
   tests/                          # pytest + pytest-asyncio
 
-claude/                           # Claude CLI configuration
-  config/
-    agents.yaml                   # Agent definitions, channel IDs, cron schedules
-    mcp.json                      # MCP server config (e.g. Playwright)
-  home/.claude/                   # Isolated HOME for Claude processes
-    CLAUDE.md                     # Global agent guidelines (applies to all agents)
-    settings.json                 # Tool permissions (allow list)
-    agents/                       # Agent system prompts (markdown)
-      main.md
-      journalist.md
-    .credentials.json             # Symlink → ~/.claude/.credentials.json (gitignored)
-  workspaces/                     # Runtime scratch dirs per agent (gitignored)
-  data/
-    sessions.json                 # Session ID persistence (gitignored)
+home/.claude/                     # Isolated HOME for Claude processes (symlinks to config/)
+  agents/ → ../../config/agents/
+  settings.json → ../../config/settings.json
+  CLAUDE.md → ../../config/CLAUDE.md
+  .credentials.json → ~/.claude/.credentials.json (gitignored)
+
+workspaces/                       # Runtime scratch dirs per agent (gitignored)
+data/                             # sessions.json — session ID persistence (gitignored)
 ```
 
 ## Configuration
+
+All configuration lives in `config/`. The `home/.claude/` directory symlinks to it so Claude Code can discover settings in the expected locations.
 
 ### agents.yaml
 
@@ -90,19 +96,20 @@ agents:
 
 ### Agent Context
 
-Each agent's identity is defined by a markdown file in `claude/home/.claude/agents/` (e.g. `main.md`, `journalist.md`). These are passed to Claude via `--agent {name}` and serve as the agent's system prompt. They are tracked in git as part of the project configuration.
+Each agent's identity is defined by a markdown file in `config/agents/` (e.g. `main.md`, `journalist.md`). These are passed to Claude via `--agent {name}` and serve as the agent's system prompt.
 
-Each agent also gets a workspace directory at `claude/workspaces/{name}/`. These are **runtime scratch directories** — gitignored and created automatically. Agents can write files, create their own `CLAUDE.md`, or store data there as they see fit. Do not rely on workspace contents being present across fresh clones.
+Each agent also gets a workspace directory at `workspaces/{name}/`. These are **runtime scratch directories** — gitignored and created automatically. Agents can write files, create their own `CLAUDE.md`, or store data there as they see fit. Do not rely on workspace contents being present across fresh clones.
 
 ### Adding a New Agent
 
-1. Add entry to `claude/config/agents.yaml` with `channel_id` and optional `schedule`
-2. Create `claude/home/.claude/agents/{name}.md` with the agent's system prompt
-3. Restart the bot
+1. Add entry to `config/agents.yaml` with `channel_id` and optional `schedule`
+2. Create `config/agents/{name}.md` with the agent's system prompt
+3. Optionally create `config/agents/{name}.mcp.json` for agent-specific MCP servers
+4. Restart the bot
 
-### MCP Servers (claude/config/mcp.json)
+### MCP Servers
 
-Passed to all Claude processes via `--mcp-config`. Example with Playwright using system Chrome:
+**Shared** (`config/mcp.json`) — passed to all agents:
 
 ```json
 {
@@ -115,7 +122,9 @@ Passed to all Claude processes via `--mcp-config`. Example with Playwright using
 }
 ```
 
-### Permissions (claude/home/.claude/settings.json)
+**Per-agent** (`config/agents/{name}.mcp.json`) — additional MCPs for a specific agent only. Both files are passed via `--mcp-config` when the agent runs.
+
+### Permissions (config/settings.json)
 
 Tool allow-list for all agents:
 
@@ -142,7 +151,7 @@ Tool allow-list for all agents:
 
 ## Session Persistence
 
-Session IDs are stored in `claude/data/sessions.json` (agent name → session UUID). On startup or message send, the bot passes `--resume {session_id}` to maintain conversation context. If resume fails, the session is cleared and a fresh one starts.
+Session IDs are stored in `data/sessions.json` (agent name → session UUID). On startup or message send, the bot passes `--resume {session_id}` to maintain conversation context. If resume fails, the session is cleared and a fresh one starts.
 
 ## Development
 
@@ -164,7 +173,7 @@ To test how agents behave, permissions, MCP access, etc. without running the ful
 
 ```bash
 # Quick auth check
-HOME=claude/home claude -p --no-session-persistence "say hello"
+HOME=home claude -p --no-session-persistence "say hello"
 ```
 
 To run an agent exactly as the bot would (same HOME, workspace, MCP, and permissions), set `REPO` and `cd` into the agent's workspace. The bot spawns each process with `cwd` set to the workspace:
@@ -173,26 +182,27 @@ To run an agent exactly as the bot would (same HOME, workspace, MCP, and permiss
 REPO=$(pwd)  # run from repo root
 
 # Interactive main agent session
-cd $REPO/claude/workspaces/main
-HOME=$REPO/claude/home claude --agent main --permission-mode acceptEdits \
-  --mcp-config $REPO/claude/config/mcp.json --no-session-persistence
+cd $REPO/workspaces/main
+HOME=$REPO/home claude --agent main --permission-mode acceptEdits \
+  --mcp-config $REPO/config/mcp.json --no-session-persistence
 
 # One-shot sub-agent (e.g. journalist)
-cd $REPO/claude/workspaces/journalist
-HOME=$REPO/claude/home claude -p --agent journalist --permission-mode acceptEdits \
-  --mcp-config $REPO/claude/config/mcp.json --no-session-persistence \
+cd $REPO/workspaces/journalist
+HOME=$REPO/home claude -p --agent journalist --permission-mode acceptEdits \
+  --mcp-config $REPO/config/mcp.json --no-session-persistence \
   -- "check the latest AI news"
 ```
 
-If auth fails, re-symlink credentials: `ln -sf ~/.claude/.credentials.json claude/home/.claude/.credentials.json`
+If auth fails, re-symlink credentials: `ln -sf ~/.claude/.credentials.json home/.claude/.credentials.json`
 
 ### Key Design Decisions
 
 - **Lazy init**: Main agent process starts without blocking on init event — session ID captured from first response
 - **Asyncio lock on stdout**: Prevents concurrent reads from stream-json stdout
 - **`--` separator**: Sub-agent prompts use `--` to prevent argparse from consuming the prompt as a flag argument
-- **Isolated HOME**: All Claude processes use `claude/home/` — credentials symlinked, settings/agents/permissions self-contained
+- **Isolated HOME**: All Claude processes use `home/` — credentials symlinked, settings/agents/permissions self-contained
 - **acceptEdits permission mode**: All processes run with `--permission-mode acceptEdits`
+- **Config symlinks**: All user-editable config lives in `config/`. `home/.claude/` symlinks to it so Claude Code finds settings in expected locations.
 
 ### Dependencies
 

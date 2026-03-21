@@ -26,13 +26,12 @@ def _resolve_paths() -> tuple[Path, Path, Path, Path, Path]:
         "CLAUDE_ASSISTANT_ROOT",
         Path(__file__).resolve().parents[3],  # bot/src/claude_assistant -> project root
     ))
-    claude_dir = project_root / "claude"
     return (
-        claude_dir / "config" / "agents.yaml",
-        claude_dir / "home",
-        claude_dir / "workspaces",
-        claude_dir / "data" / "sessions.json",
-        claude_dir / "config" / "mcp.json",
+        project_root / "config" / "agents.yaml",
+        project_root / "home",
+        project_root / "workspaces",
+        project_root / "data" / "sessions.json",
+        project_root / "config" / "mcp.json",
     )
 
 
