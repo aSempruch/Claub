@@ -66,7 +66,8 @@ class AssistantBot:
         workspace = self.workspaces_dir / "main"
         workspace.mkdir(parents=True, exist_ok=True)
         self._main_process = MainAgentProcess(
-            home_dir=self.home_dir, workspace=workspace, mcp_config=self.mcp_config
+            home_dir=self.home_dir, workspace=workspace, mcp_config=self.mcp_config,
+            agent_name="main",
         )
         session_id = self.sessions.get("main")
         try:

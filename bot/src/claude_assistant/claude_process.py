@@ -12,10 +12,11 @@ log = logging.getLogger(__name__)
 class MainAgentProcess:
     """Long-running Claude Code process with stream-json I/O."""
 
-    def __init__(self, home_dir: Path, workspace: Path, mcp_config: Path | None = None) -> None:
+    def __init__(self, home_dir: Path, workspace: Path, mcp_config: Path | None = None, agent_name: str | None = None) -> None:
         self.home_dir = home_dir
         self.workspace = workspace
         self.mcp_config = mcp_config
+        self.agent_name = agent_name
         self._process: asyncio.subprocess.Process | None = None
         self._session_id: str | None = None
         self._lock = asyncio.Lock()
@@ -29,6 +30,8 @@ class MainAgentProcess:
             "--verbose",
             "--permission-mode", "acceptEdits",
         ]
+        if self.agent_name:
+            cmd.extend(["--agent", self.agent_name])
         if self.mcp_config:
             cmd.extend(["--mcp-config", str(self.mcp_config)])
         if session_id:
