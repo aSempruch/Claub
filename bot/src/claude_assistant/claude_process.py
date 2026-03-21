@@ -73,6 +73,7 @@ class MainAgentProcess:
             stderr=asyncio.subprocess.PIPE,
             cwd=self.workspace,
             env=self._env(),
+            limit=10 * 1024 * 1024,  # 10MB — Claude stream-json can emit large lines
         )
         asyncio.create_task(self._drain_stderr())
         self._ready.set()
