@@ -138,6 +138,10 @@ class AssistantBot:
                 assert self._main_process
                 result = await self._main_process.send_message(content)
 
+            # Persist session ID (captured lazily during send_message)
+            if self._main_process.session_id:
+                self.sessions.set("main", self._main_process.session_id)
+
         for chunk in chunk_message(result):
             await message.channel.send(chunk)
 
