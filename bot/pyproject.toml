@@ -1,0 +1,23 @@
+[project]
+name = "claude-assistant"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "discord.py>=2.4",
+    "apscheduler>=3.10,<4",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+]
+
+[project.scripts]
+claude-assistant = "claude_assistant.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
