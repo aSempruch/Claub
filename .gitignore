@@ -6,17 +6,4 @@ __pycache__/
 .home/
 .superpowers/
 test_scripts/
-home/.claude.json
-home/.claude/backups/
-home/.claude/cache/
-home/.claude/plugins/
-home/.claude/projects/
-home/.claude/.credentials.json
-home/.claude/mcp-needs-auth-cache.json
-home/.claude/telemetry/
-home/.npm/
-home/Library/
-config/
-data/sessions.json
-workspaces/
 .playwright-mcp/

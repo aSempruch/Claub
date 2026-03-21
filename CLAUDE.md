@@ -10,11 +10,21 @@ A Discord bot that bridges Discord channels to Claude Code CLI sessions. A persi
 # Set your Discord bot token in bot/.envrc
 echo 'export DISCORD_BOT_TOKEN="your-token"' > bot/.envrc
 
-# Symlink Claude credentials into the isolated home
-ln -s ~/.claude/.credentials.json home/.claude/.credentials.json
+# Create ~/.claub with config, home, workspaces, and data
+mkdir -p ~/.claub/{config/agents,home/.claude,workspaces,data}
+
+# Set up the isolated HOME symlinks
+cd ~/.claub/home/.claude
+ln -s ../../config/agents agents
+ln -s ../../config/CLAUDE.md CLAUDE.md
+ln -s ../../config/settings.json settings.json
+ln -s ~/.claude/.credentials.json .credentials.json
+
+# Add your config files (agents.yaml, CLAUDE.md, settings.json, mcp.json, agents/*.md)
+# See Configuration section below
 
 # Install deps and register the launchd service
-cd bot && uv sync && cd ..
+cd /path/to/claub/bot && uv sync && cd ..
 scripts/ctl.sh install
 scripts/ctl.sh start
 ```
@@ -42,21 +52,11 @@ AssistantBot (discord.py)
         └─ Fires sub-agents on cron schedules
 ```
 
-All Claude processes run with an **isolated HOME** (`home/`) — separate from the user's real `~/.claude`. Credentials are symlinked from the real home.
+All Claude processes run with an **isolated HOME** (`~/.claub/home/`) — separate from the user's real `~/.claude`. Credentials are symlinked from the real home.
 
 ## Project Structure
 
 ```
-config/                           # All user-editable configuration
-  agents.yaml                     # Agent definitions, channel IDs, cron schedules
-  mcp.json                        # Shared MCP server config (e.g. Playwright)
-  settings.json                   # Claude tool permissions (allow list)
-  CLAUDE.md                       # Global agent guidelines (applies to all agents)
-  agents/                         # Agent system prompts and per-agent MCP configs
-    main.md                       # Main agent system prompt
-    journalist.md                 # Journalist agent system prompt
-    journalist.mcp.json           # Optional per-agent MCP config
-
 bot/                              # Python package (discord bot)
   pyproject.toml                  # deps: discord.py, apscheduler, pyyaml, python-dotenv
   src/claude_assistant/
@@ -70,24 +70,33 @@ bot/                              # Python package (discord bot)
     chunker.py                    # Splits long messages for Discord's 2000-char limit
   tests/                          # pytest + pytest-asyncio
 
-home/.claude/                     # Isolated HOME for Claude processes (symlinks to config/)
-  agents/ → ../../config/agents/
-  settings.json → ../../config/settings.json
-  CLAUDE.md → ../../config/CLAUDE.md
-  .credentials.json → ~/.claude/.credentials.json (gitignored)
-
 scripts/                          # Service management
   run.sh                          # Wrapper for launchd — loads env, runs bot
   ctl.sh                          # Service control (install/start/stop/restart/logs/status)
   com.asempruch.claub.plist       # launchd plist template (paths filled at install)
 
-workspaces/                       # Runtime scratch dirs per agent (gitignored)
-data/                             # sessions.json — session ID persistence (gitignored)
+~/.claub/                         # User instance (not in repo)
+  config/                         # All user-editable configuration
+    agents.yaml                   # Agent definitions, channel IDs, cron schedules
+    mcp.json                      # Shared MCP server config (e.g. Playwright)
+    settings.json                 # Claude tool permissions (allow list)
+    CLAUDE.md                     # Global agent guidelines (applies to all agents)
+    agents/                       # Agent system prompts and per-agent MCP configs
+      main.md                     # Main agent system prompt
+      journalist.md               # Journalist agent system prompt
+      journalist.mcp.json         # Optional per-agent MCP config
+  home/.claude/                   # Isolated HOME for Claude processes (symlinks to config/)
+    agents/ → ../../config/agents/
+    settings.json → ../../config/settings.json
+    CLAUDE.md → ../../config/CLAUDE.md
+    .credentials.json → ~/.claude/.credentials.json
+  workspaces/                     # Runtime scratch dirs per agent (auto-created)
+  data/                           # sessions.json — session ID persistence
 ```
 
 ## Configuration
 
-All configuration lives in `config/`. The `home/.claude/` directory symlinks to it so Claude Code can discover settings in the expected locations.
+All configuration lives in `~/.claub/config/`. The `~/.claub/home/.claude/` directory symlinks to it so Claude Code can discover settings in the expected locations. Override the default path by setting the `CLAUB_HOME` environment variable.
 
 ### agents.yaml
 
@@ -109,21 +118,21 @@ agents:
 
 Agent behavior is configured at two levels:
 
-- **`config/CLAUDE.md`** — Global guidelines that apply to all agents: safety rules, Discord behavior, workspace usage, and the memory protocol. Loaded automatically via the isolated HOME's symlink.
-- **`config/agents/{name}.md`** — Per-agent identity: role, personality, task instructions, and agent-specific memory structure (what to track, how to organize it, retention policies). Passed to Claude via `--agent {name}`.
+- **`~/.claub/config/CLAUDE.md`** — Global guidelines that apply to all agents: safety rules, Discord behavior, workspace usage, and the memory protocol. Loaded automatically via the isolated HOME's symlink.
+- **`~/.claub/config/agents/{name}.md`** — Per-agent identity: role, personality, task instructions, and agent-specific memory structure (what to track, how to organize it, retention policies). Passed to Claude via `--agent {name}`.
 
-Each agent also gets a workspace directory at `workspaces/{name}/`. These are **runtime scratch directories** — gitignored and created automatically. Agents can write files, create their own `CLAUDE.md`, or store data there as they see fit. Do not rely on workspace contents being present across fresh clones.
+Each agent also gets a workspace directory at `~/.claub/workspaces/{name}/`. These are **runtime scratch directories** created automatically. Agents can write files, create their own `CLAUDE.md`, or store data there as they see fit.
 
 ### Adding a New Agent
 
-1. Add entry to `config/agents.yaml` with `channel_id` and optional `schedule`
-2. Create `config/agents/{name}.md` with the agent's system prompt
-3. Optionally create `config/agents/{name}.mcp.json` for agent-specific MCP servers
+1. Add entry to `~/.claub/config/agents.yaml` with `channel_id` and optional `schedule`
+2. Create `~/.claub/config/agents/{name}.md` with the agent's system prompt (must include YAML frontmatter with `name` and `description`)
+3. Optionally create `~/.claub/config/agents/{name}.mcp.json` for agent-specific MCP servers
 4. Restart the bot
 
 ### MCP Servers
 
-**Shared** (`config/mcp.json`) — passed to all agents:
+**Shared** (`~/.claub/config/mcp.json`) — passed to all agents:
 
 ```json
 {
@@ -136,9 +145,9 @@ Each agent also gets a workspace directory at `workspaces/{name}/`. These are **
 }
 ```
 
-**Per-agent** (`config/agents/{name}.mcp.json`) — additional MCPs for a specific agent only. Both files are passed via `--mcp-config` when the agent runs.
+**Per-agent** (`~/.claub/config/agents/{name}.mcp.json`) — additional MCPs for a specific agent only. Both files are passed via `--mcp-config` when the agent runs.
 
-### Permissions (config/settings.json)
+### Permissions (~/.claub/config/settings.json)
 
 Tool allow-list for all agents:
 
@@ -165,7 +174,7 @@ Tool allow-list for all agents:
 
 ## Session Persistence
 
-Session IDs are stored in `data/sessions.json` (agent name → session UUID). On startup or message send, the bot passes `--resume {session_id}` to maintain conversation context. If resume fails, the session is cleared and a fresh one starts.
+Session IDs are stored in `~/.claub/data/sessions.json` (agent name → session UUID). On startup or message send, the bot passes `--resume {session_id}` to maintain conversation context. If resume fails, the session is cleared and a fresh one starts.
 
 ## Service Management
 
@@ -197,7 +206,7 @@ After completing a feature or bug fix (not every individual edit, but once the w
 scripts/ctl.sh restart
 ```
 
-This applies to changes in bot code (`bot/`), agent prompts (`config/agents/`), global config (`config/CLAUDE.md`), and permissions (`config/settings.json`).
+This applies to changes in bot code (`bot/`), agent prompts (`~/.claub/config/agents/`), global config (`~/.claub/config/CLAUDE.md`), and permissions (`~/.claub/config/settings.json`).
 
 ## Development
 
@@ -219,42 +228,41 @@ To test how agents behave, permissions, MCP access, etc. without running the ful
 
 ```bash
 # Quick auth check
-HOME=home claude -p --no-session-persistence "say hello"
+HOME=~/.claub/home claude -p --no-session-persistence "say hello"
 ```
 
-To run an agent exactly as the bot would (same HOME, workspace, MCP, and permissions), set `REPO` and `cd` into the agent's workspace. The bot spawns each process with `cwd` set to the workspace:
+To run an agent exactly as the bot would (same HOME, workspace, MCP, and permissions), `cd` into the agent's workspace. The bot spawns each process with `cwd` set to the workspace:
 
 ```bash
-REPO=$(pwd)  # run from repo root
-
 # Interactive main agent session
-cd $REPO/workspaces/main
-HOME=$REPO/home claude --agent main --permission-mode acceptEdits \
-  --mcp-config $REPO/config/mcp.json --no-session-persistence
+cd ~/.claub/workspaces/main
+HOME=~/.claub/home claude --agent main --permission-mode acceptEdits \
+  --mcp-config ~/.claub/config/mcp.json --no-session-persistence
 
 # One-shot sub-agent (e.g. journalist)
-cd $REPO/workspaces/journalist
-HOME=$REPO/home claude -p --agent journalist --permission-mode acceptEdits \
-  --mcp-config $REPO/config/mcp.json --no-session-persistence \
+cd ~/.claub/workspaces/journalist
+HOME=~/.claub/home claude -p --agent journalist --permission-mode acceptEdits \
+  --mcp-config ~/.claub/config/mcp.json --no-session-persistence \
   -- "check the latest AI news"
 ```
 
-If auth fails, re-symlink credentials: `ln -sf ~/.claude/.credentials.json home/.claude/.credentials.json`
+If auth fails, re-symlink credentials: `ln -sf ~/.claude/.credentials.json ~/.claub/home/.claude/.credentials.json`
 
 ### Key Design Decisions
 
 - **Lazy init**: Main agent process starts without blocking on init event — session ID captured from first response
 - **Asyncio lock on stdout**: Prevents concurrent reads from stream-json stdout
 - **`--` separator**: Sub-agent prompts use `--` to prevent argparse from consuming the prompt as a flag argument
-- **Isolated HOME**: All Claude processes use `home/` — credentials symlinked, settings/agents/permissions self-contained
+- **Isolated HOME**: All Claude processes use `~/.claub/home/` — credentials symlinked, settings/agents/permissions self-contained
 - **acceptEdits permission mode**: All processes run with `--permission-mode acceptEdits`
-- **Config symlinks**: All user-editable config lives in `config/`. `home/.claude/` symlinks to it so Claude Code finds settings in expected locations.
+- **Config symlinks**: All user-editable config lives in `~/.claub/config/`. `~/.claub/home/.claude/` symlinks to it so Claude Code finds settings in expected locations.
+- **Separated instance from source**: Bot code lives in the repo; user config and runtime state live in `~/.claub/` (overridable via `CLAUB_HOME` env var).
 
 ### Agent Memory System
 
-Agents are long-running assistants (not dev tools) that may operate for months. Memory is file-based, stored in each agent's workspace at `workspaces/{name}/memory/`. The system is designed to stay useful over time without unbounded growth.
+Agents are long-running assistants (not dev tools) that may operate for months. Memory is file-based, stored in each agent's workspace at `~/.claub/workspaces/{name}/memory/`. The system is designed to stay useful over time without unbounded growth.
 
-Memory guidelines live within the broader agent configuration system (see "Agent Context" above). `config/CLAUDE.md` defines global rules that apply to all agents — safety, Discord behavior, workspace usage, and the memory protocol. `config/agents/{name}.md` defines each agent's role, personality, task instructions, and agent-specific memory structure. When editing memory guidelines, preserve this split: global rules enforce mechanical discipline; agent-specific rules define *what* to remember and *how long* to keep it.
+Memory guidelines live within the broader agent configuration system (see "Agent Context" above). `~/.claub/config/CLAUDE.md` defines global rules that apply to all agents — safety, Discord behavior, workspace usage, and the memory protocol. `~/.claub/config/agents/{name}.md` defines each agent's role, personality, task instructions, and agent-specific memory structure. When editing memory guidelines, preserve this split: global rules enforce mechanical discipline; agent-specific rules define *what* to remember and *how long* to keep it.
 
 **Design principles to enforce:**
 - **Mandatory startup read**: Every agent reads `memory/index.md` before doing any work, every session. No conditional checks.

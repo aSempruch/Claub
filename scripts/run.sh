@@ -10,7 +10,5 @@ set -a
 source "$BOT_DIR/.envrc"
 set +a
 
-export CLAUDE_ASSISTANT_ROOT="$REPO_DIR"
-
 cd "$BOT_DIR"
 exec /opt/homebrew/bin/uv run claude-assistant

@@ -21,18 +21,18 @@ logging.getLogger("claude_assistant.claude_process").setLevel(logging.DEBUG)
 
 
 def _resolve_paths() -> tuple[Path, Path, Path, Path, Path, Path]:
-    """Resolve project paths relative to this file or env vars."""
-    project_root = Path(os.environ.get(
-        "CLAUDE_ASSISTANT_ROOT",
-        Path(__file__).resolve().parents[3],  # bot/src/claude_assistant -> project root
+    """Resolve paths relative to CLAUB_HOME (default: ~/.claub)."""
+    claub_home = Path(os.environ.get(
+        "CLAUB_HOME",
+        Path.home() / ".claub",
     ))
     return (
-        project_root / "config" / "agents.yaml",
-        project_root / "home",
-        project_root / "workspaces",
-        project_root / "data" / "sessions.json",
-        project_root / "config" / "mcp.json",
-        project_root / "config" / "agents",
+        claub_home / "config" / "agents.yaml",
+        claub_home / "home",
+        claub_home / "workspaces",
+        claub_home / "data" / "sessions.json",
+        claub_home / "config" / "mcp.json",
+        claub_home / "config" / "agents",
     )
 
 
