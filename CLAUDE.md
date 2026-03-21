@@ -1,5 +1,7 @@
 # Claub — Discord Bot for Claude Code CLI
 
+> **Note for the dev-time Claude Code instance:** This file documents the **Claub project** — a bot that spawns its own Claude CLI processes at runtime. References to "agents", "HOME", "permissions", "MCP configs", and "sessions" below describe how the **bot's** Claude processes are configured, **not** how you (the Claude Code instance helping develop this project) should behave. Do not adopt the bot's isolated HOME, permission settings, or agent prompts as your own.
+
 A Discord bot that bridges Discord channels to Claude Code CLI sessions. A persistent main agent handles general conversation; sub-agents handle specialized tasks on their own channels with optional cron schedules.
 
 ## Quick Start
@@ -103,7 +105,10 @@ agents:
 
 ### Agent Context
 
-Each agent's identity is defined by a markdown file in `config/agents/` (e.g. `main.md`, `journalist.md`). These are passed to Claude via `--agent {name}` and serve as the agent's system prompt.
+Agent behavior is configured at two levels:
+
+- **`config/CLAUDE.md`** — Global guidelines that apply to all agents: safety rules, Discord behavior, workspace usage, and the memory protocol. Loaded automatically via the isolated HOME's symlink.
+- **`config/agents/{name}.md`** — Per-agent identity: role, personality, task instructions, and agent-specific memory structure (what to track, how to organize it, retention policies). Passed to Claude via `--agent {name}`.
 
 Each agent also gets a workspace directory at `workspaces/{name}/`. These are **runtime scratch directories** — gitignored and created automatically. Agents can write files, create their own `CLAUDE.md`, or store data there as they see fit. Do not rely on workspace contents being present across fresh clones.
 
@@ -232,6 +237,19 @@ If auth fails, re-symlink credentials: `ln -sf ~/.claude/.credentials.json home/
 - **Isolated HOME**: All Claude processes use `home/` — credentials symlinked, settings/agents/permissions self-contained
 - **acceptEdits permission mode**: All processes run with `--permission-mode acceptEdits`
 - **Config symlinks**: All user-editable config lives in `config/`. `home/.claude/` symlinks to it so Claude Code finds settings in expected locations.
+
+### Agent Memory System
+
+Agents are long-running assistants (not dev tools) that may operate for months. Memory is file-based, stored in each agent's workspace at `workspaces/{name}/memory/`. The system is designed to stay useful over time without unbounded growth.
+
+Memory guidelines live within the broader agent configuration system (see "Agent Context" above). `config/CLAUDE.md` defines global rules that apply to all agents — safety, Discord behavior, workspace usage, and the memory protocol. `config/agents/{name}.md` defines each agent's role, personality, task instructions, and agent-specific memory structure. When editing memory guidelines, preserve this split: global rules enforce mechanical discipline; agent-specific rules define *what* to remember and *how long* to keep it.
+
+**Design principles to enforce:**
+- **Mandatory startup read**: Every agent reads `memory/index.md` before doing any work, every session. No conditional checks.
+- **Write-time pruning**: Every memory write must include a review of the index. Remove outdated entries, merge overlapping ones. This is the primary defense against memory bloat.
+- **Compaction awareness**: Claude's context compaction can silently drop conversation history. Anything important must be written to memory files promptly — not deferred to end-of-session.
+- **Current state wins**: When memory conflicts with observed reality, trust what's there now and update the memory. Stale entries that persist cause compounding errors.
+- **Bounded growth**: Index should stay under ~50 entries. Agent-specific rules should define retention periods (e.g., journalist keeps 7 days of briefs). Memory without a pruning policy will degrade agent performance over time.
 
 ### Dependencies
 

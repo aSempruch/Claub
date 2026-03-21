@@ -37,34 +37,43 @@ Your sessions persist via `--resume`. You may have context from previous convers
 
 ## Memory
 
-Your conversation history may be reset at any time. To maintain continuity across sessions, use your workspace's `memory/` directory. This is your long-term memory — treat it as essential, not optional.
+Your conversation history may be reset at any time. Context compaction may silently discard older parts of the conversation. To maintain continuity, use your workspace's `memory/` directory. This is your long-term memory — treat it as essential, not optional.
 
-### How it works
+### Startup protocol
 
-- Your workspace is persistent. Files in `memory/` survive session resets.
-- Before doing work that builds on past activity, **read your memory first**.
-- After completing work, **update your memory** with what you did.
+**Every session, before doing any work:**
+1. Read `memory/index.md` — this tells you what you know
+2. Read any entries relevant to the current task
+
+No exceptions. Even for simple requests, check your index first.
 
 ### Structure
 
-Organize `memory/` however makes sense for your role, but follow these principles:
+Organize `memory/` however makes sense for your role. Your agent-specific instructions define what categories and structure to use. But always follow these principles:
 
-- **Keep an index.** Maintain a `memory/index.md` that summarizes what's in memory and links to detail files. This is the first file you should read — it tells you what you know.
+- **Keep an index.** Maintain a `memory/index.md` that summarizes what's in memory and links to detail files.
 - **Be selective.** Store what you'll need later: decisions made, work completed, key facts, ongoing threads. Don't dump raw data — summarize.
-- **Stay current.** Update or remove entries that are outdated. Stale memory is worse than no memory.
 - **Use dates.** Include dates in entries so you can judge freshness. Use ISO format (2026-03-21).
-
-### When to read memory
-
-- At the start of any task that might relate to past work
-- When asked to do something recurring (briefs, reports, checks)
-- When you're unsure if you've already done something
 
 ### When to write memory
 
 - After completing a task worth remembering
 - When you learn something you'll need in future sessions
 - When the state of an ongoing thread changes
+- **Before long operations** — if you're mid-task and the context might compact, write progress to memory now, not later
+
+### Pruning
+
+Stale memory is worse than no memory. **Every time you write new memory, review the index:**
+
+- Remove entries that are outdated or no longer useful
+- Merge entries that overlap or repeat
+- Mark time-sensitive entries with dates so you can judge freshness later
+- If the index exceeds ~50 entries, consolidate aggressively
+
+### Conflicts
+
+If memory contradicts what you currently observe (a link is dead, information has changed, something no longer exists), **trust what you see now**. Update or delete the stale memory entry.
 
 ### What NOT to store
 

@@ -27,7 +27,7 @@ memory/
 
 Before writing a brief:
 1. Read `memory/index.md` to see what you've already covered
-2. Skim recent briefs in `memory/briefs/` to avoid repetition
+2. Skim the last 2–3 briefs in `memory/briefs/` to avoid repetition
 
 After writing a brief:
 1. Save a summary to `memory/briefs/{date}.md` — list each story with a one-line takeaway
@@ -40,3 +40,10 @@ Track each story in `index.md` with a status:
 - **developing** — expect updates, keep watching
 - **resolved** — concluded, no need to follow up unless something changes
 - **stale** — no updates for 3+ days, drop from active tracking
+
+### Pruning briefs
+
+Old daily briefs lose value quickly. When updating memory:
+- Keep the last 7 days of individual brief files
+- Delete briefs older than 7 days — if a story from an old brief is still relevant, it should already be tracked in `index.md`
+- Stories marked **stale** or **resolved** for more than a week should be removed from the index entirely
