@@ -9,6 +9,29 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 
+class AuthenticationError(RuntimeError):
+    """Raised when Claude CLI returns an authentication error."""
+    pass
+
+
+def _check_auth_error(text: str) -> None:
+    """Raise AuthenticationError if the text looks like an auth failure."""
+    if "authentication_error" in text or "Invalid authentication credentials" in text:
+        raise AuthenticationError(f"Claude authentication failed: {text[:200]}")
+
+
+def _check_error_event(event: dict) -> None:
+    """Raise on error-type JSON events from the Claude CLI."""
+    if event.get("type") == "error":
+        error = event.get("error", {})
+        if isinstance(error, dict) and error.get("type") == "authentication_error":
+            raise AuthenticationError(
+                f"Claude authentication failed: {error.get('message', '')}"
+            )
+        msg = error.get("message", "") if isinstance(error, dict) else str(error)
+        raise RuntimeError(f"Claude error: {msg}")
+
+
 class MainAgentProcess:
     """Long-running Claude Code process with stream-json I/O."""
 
@@ -120,6 +143,8 @@ class MainAgentProcess:
             except json.JSONDecodeError:
                 continue
 
+            _check_error_event(event)
+
             # Capture session_id if we see it
             sid = self._parse_session_id(event)
             if sid:
@@ -198,9 +223,16 @@ class SubAgentRunner:
                 f"Sub-agent {self.agent_name} timed out after {timeout}s"
             )
         if proc.returncode != 0:
+            stderr_text = stderr.decode()[:500]
+            stdout_text = stdout.decode()[:500]
+            # Check both streams for auth errors before raising generic error
+            _check_auth_error(stderr_text)
+            _check_auth_error(stdout_text)
             raise RuntimeError(
                 f"Sub-agent {self.agent_name} failed (rc={proc.returncode}): "
-                f"{stderr.decode()[:500]}"
+                f"{stderr_text}"
             )
         output = json.loads(stdout.decode())
+        # CLI may return an error object instead of a result object
+        _check_error_event(output)
         return output["result"], output["session_id"]

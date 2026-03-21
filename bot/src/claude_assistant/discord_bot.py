@@ -8,7 +8,7 @@ from pathlib import Path
 import discord
 
 from claude_assistant.chunker import chunk_message
-from claude_assistant.claude_process import MainAgentProcess, SubAgentRunner
+from claude_assistant.claude_process import AuthenticationError, MainAgentProcess, SubAgentRunner
 from claude_assistant.config import AssistantConfig
 from claude_assistant.router import Router
 from claude_assistant.scheduler import Scheduler
@@ -131,6 +131,12 @@ class AssistantBot:
         async with message.channel.typing():
             try:
                 result = await self._main_process.send_message(content)
+            except AuthenticationError:
+                log.error("Claude authentication failed")
+                await message.channel.send(
+                    "Claude authentication expired. Re-authenticate with `claude` on the host and restart."
+                )
+                return
             except RuntimeError:
                 log.exception("Main agent error, restarting")
                 await message.channel.send("Main agent crashed, restarting...")
@@ -167,6 +173,12 @@ class AssistantBot:
                 try:
                     result, new_sid = await runner.run(content, session_id)
                     self.sessions.set(agent_name, new_sid)
+                except AuthenticationError:
+                    log.error("Claude authentication failed for agent %s", agent_name)
+                    await message.channel.send(
+                        "Claude authentication expired. Re-authenticate with `claude` on the host and restart."
+                    )
+                    return
                 except RuntimeError:
                     if session_id:
                         log.warning("Agent %s resume failed, retrying fresh", agent_name)
@@ -210,12 +222,23 @@ class AssistantBot:
             try:
                 result, new_sid = await runner.run(prompt, session_id)
                 self.sessions.set(agent_name, new_sid)
+            except AuthenticationError:
+                log.error("Claude authentication failed for scheduled agent %s", agent_name)
+                await channel.send(
+                    "Claude authentication expired. Re-authenticate with `claude` on the host and restart."
+                )
+                return
             except RuntimeError as e:
                 if session_id:
                     self.sessions.delete(agent_name)
                     try:
                         result, new_sid = await runner.run(prompt, None)
                         self.sessions.set(agent_name, new_sid)
+                    except AuthenticationError:
+                        await channel.send(
+                            "Claude authentication expired. Re-authenticate with `claude` on the host and restart."
+                        )
+                        return
                     except Exception as e2:
                         await channel.send(f"Scheduled task failed: {e2}")
                         return
