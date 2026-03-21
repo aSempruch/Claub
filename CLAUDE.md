@@ -289,6 +289,8 @@ scripts/ctl.sh restart
 
 This applies to changes in bot code (`bot/`), agent prompts (`~/.claub/config/agents/`), global config (`~/.claub/config/CLAUDE.md`), and permissions (`~/.claub/config/settings.json`).
 
+**Two repos to commit to:** Bot code lives in the project repo (`~/Claude`), instance config lives in `~/.claub` (its own git repo). After making changes, commit to whichever repo was modified — often both. For example, adding a new MCP server touches `~/.claub/mcps/` and `~/.claub/config/agents/`, while documenting the pattern touches `~/Claude/CLAUDE.md`.
+
 ## Development
 
 ### Running Tests
