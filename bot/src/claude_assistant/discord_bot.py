@@ -223,6 +223,10 @@ class AssistantBot:
                     await channel.send(f"Scheduled task failed: {e}")
                     return
 
+        if result.strip().startswith("[NO_POST]"):
+            log.info("Agent %s opted out of posting", agent_name)
+            return
+
         for chunk in chunk_message(result):
             await channel.send(chunk)
 

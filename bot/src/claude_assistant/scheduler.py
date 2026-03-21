@@ -33,7 +33,8 @@ class Scheduler:
 
     async def _run(self, agent_name: str, prompt: str) -> None:
         log.info("Scheduled task firing for %s", agent_name)
-        await self._callback(agent_name, prompt)
+        prefixed = f"[scheduled] {prompt}"
+        await self._callback(agent_name, prefixed)
 
     def get_jobs(self) -> list:
         return self._scheduler.get_jobs()
