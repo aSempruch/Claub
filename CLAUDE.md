@@ -157,17 +157,45 @@ MCP servers give agents access to external tools (APIs, browsers, etc.) without 
 
 Use the `/build-mcp-server` skill for the full guide on building, wiring, and testing custom MCP servers for agents.
 
-### Permissions (~/.claub/config/settings.json)
+### Permissions & Sandboxing (~/.claub/config/settings.json)
 
-Tool allow-list for all agents:
+Tool allow-list and OS-level sandbox for all agents:
 
 ```json
 {
   "permissions": {
     "allow": ["mcp__playwright__*", "WebFetch", "WebSearch"]
+  },
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": false,
+    "allowUnsandboxedCommands": false,
+    "filesystem": {
+      "allowWrite": [
+        "/private/tmp/claub",
+        "/Users/you/.claub/workspaces",
+        "/Users/you/.claub/home/.cache/uv",
+        "/Users/you/.claub/home/.local/share/uv"
+      ],
+      "denyRead": [
+        "/Users/you/Desktop", "/Users/you/Documents", "/Users/you/Downloads",
+        "/Users/you/.claude", "/Users/you/.ssh", "/Users/you/.aws",
+        "/Users/you/.gnupg", "/Users/you/.config/gh", "/Users/you/.netrc",
+        "/Users/you/.npmrc", "/Users/you/.zshrc", "/Users/you/.zsh_history",
+        "/Users/you/.bash_history", "/Users/you/Library/Keychains"
+      ]
+    }
   }
 }
 ```
+
+The sandbox uses macOS Seatbelt to enforce restrictions at the OS level — all child processes (including scripts run via `uv run`) are equally constrained. Key properties:
+
+- **Writes** are restricted to the workspace, `/tmp/claub`, and uv cache/data dirs. Writes anywhere else (including `/tmp`) are blocked by the kernel.
+- **Reads** are open by default except for explicitly denied paths (credentials, SSH keys, personal dirs). Note: `denyRead` on a parent path also blocks writes to child paths, so we enumerate specific sensitive dirs rather than denying `/Users/you` broadly.
+- **Network** from subprocesses is blocked (curl, urllib, etc. all fail). Agents can still use `WebFetch`/`WebSearch` via Claude's built-in tools.
+- **`allowUnsandboxedCommands: false`** prevents the `dangerouslyDisableSandbox` escape hatch.
+- To allow Bash execution (e.g. `Bash(uv run *)`), add it to `permissions.allow` — the sandbox ensures scripts can't escape. Pre-install Python via `HOME=~/.claub/home uv python install 3.13` first since `uv` needs a writable cache for initial setup.
 
 ## Message Flow
 
