@@ -2,7 +2,7 @@
 
 > **Note for the dev-time Claude Code instance:** This file documents the **Claub project** — a bot that spawns its own Claude CLI processes at runtime. References to "agents", "HOME", "permissions", "MCP configs", and "sessions" below describe how the **bot's** Claude processes are configured, **not** how you (the Claude Code instance helping develop this project) should behave. Do not adopt the bot's isolated HOME, permission settings, or agent prompts as your own.
 
-A Discord bot that bridges Discord channels to Claude Code CLI sessions. A persistent main agent handles general conversation; sub-agents handle specialized tasks on their own channels with optional cron schedules.
+A Discord bot that bridges Discord channels to Claude Code CLI sessions. Each agent gets its own channel and a persistent streaming process, with optional cron schedules.
 
 ## Quick Start
 
@@ -37,19 +37,15 @@ Discord User
     ▼
 AssistantBot (discord.py)
     │
-    ├─ Router ──► maps channel ID → "main" or agent name
+    ├─ Router ──► maps channel ID → agent name
     │
-    ├─ Main Agent (MainAgentProcess)
-    │   └─ Long-running `claude --agent main --input-format stream-json --output-format stream-json`
+    ├─ Agent Processes (AgentProcess, one per agent)
+    │   └─ Long-running `claude --agent {name} --input-format stream-json --output-format stream-json`
     │   └─ Communicates via stdin/stdout JSON events
-    │   └─ Supervised — auto-restarts on crash
-    │
-    ├─ Sub-Agents (SubAgentRunner)
-    │   └─ One-shot `claude -p --agent {name} -- {prompt}`
-    │   └─ Per-agent asyncio locks prevent concurrent runs
+    │   └─ Started lazily on first message, supervised — auto-restarts on crash
     │
     └─ Scheduler (APScheduler)
-        └─ Fires sub-agents on cron schedules
+        └─ Fires any agent on cron schedules (including main)
 ```
 
 All Claude processes run with an **isolated HOME** (`~/.claub/home/`) — separate from the user's real `~/.claude`. Credentials are symlinked from the real home.
@@ -63,7 +59,7 @@ bot/                              # Python package (discord bot)
     main.py                       # Entry point — loads .envrc, resolves paths, starts bot
     config.py                     # Parses agents.yaml → AssistantConfig dataclasses
     discord_bot.py                # AssistantBot — routing, message handling, lifecycle
-    claude_process.py             # MainAgentProcess (stream-json) + SubAgentRunner (one-shot)
+    claude_process.py             # AgentProcess — persistent stream-json process per agent
     router.py                     # Channel ID → agent name mapping
     scheduler.py                  # APScheduler cron wrapper
     session.py                    # SessionStore — atomic JSON persistence of session IDs
@@ -105,16 +101,20 @@ All configuration lives in `~/.claub/config/`. The `~/.claub/home/.claude/` dire
 ### agents.yaml
 
 ```yaml
-discord:
-  main_channel_id: "123456789"    # Required — channel the main agent listens on
-
 agents:
+  main:
+    channel_id: "123456789"       # Required — every agent needs a channel
+    schedule:                     # Optional — cron triggers work for any agent
+      - cron: "0 8 * * *"
+        prompt: "Review my open action items"
   journalist:
-    channel_id: "987654321"       # Required — dedicated channel for this agent
-    schedule:                     # Optional — cron triggers
+    channel_id: "987654321"
+    schedule:
       - cron: "0 9 * * *"
         prompt: "Check the latest tech news"
 ```
+
+An `agents.main` entry is required.
 
 > **Note:** Do not add `[scheduled]` to cron prompts in `agents.yaml` — the bot prefixes it automatically at runtime (see `scheduler.py`).
 
@@ -243,15 +243,16 @@ Tool allow-list for all agents:
 ## Message Flow
 
 1. User sends message in Discord
-2. Router checks channel ID → `("main", None)` or `("agent", "journalist")`
-3. **Main channel**: message sent to long-running process via stream-json stdin, response read from stdout events until `type: result`
-4. **Agent channel**: acquire per-agent lock, run `claude -p --agent {name} -- {message}`, parse JSON output
-5. Response chunked at newline boundaries (max 2000 chars) and sent back
+2. Router checks channel ID → agent name (or ignores if unknown channel)
+3. Bot gets or starts the agent's persistent stream-json process (lazy startup)
+4. Message sent to process via stdin, response read from stdout events until `type: result`
+5. On process error: restart and retry once. On auth error: notify user.
+6. Response chunked at newline boundaries (max 2000 chars) and sent back
 
 ### Commands
 
-- `/clear` in main channel — stops main process, clears session, restarts
-- `/clear {agent}` — clears sub-agent session (next message starts fresh)
+- `/clear` — stops agent process for current channel, clears session (next message starts fresh)
+- `/clear {agent}` — same, but targets a specific agent by name
 
 ## Session Persistence
 
@@ -317,25 +318,25 @@ HOME=~/.claub/home claude -p --no-session-persistence "say hello"
 To run an agent exactly as the bot would (same HOME, workspace, MCP, and permissions), `cd` into the agent's workspace. The bot spawns each process with `cwd` set to the workspace:
 
 ```bash
-# Interactive main agent session
+# Interactive agent session (e.g. main)
 cd ~/.claub/workspaces/main
 HOME=~/.claub/home claude --agent main --permission-mode acceptEdits \
   --mcp-config ~/.claub/config/mcp.json --no-session-persistence
 
-# One-shot sub-agent (e.g. journalist)
+# Another agent (e.g. journalist)
 cd ~/.claub/workspaces/journalist
-HOME=~/.claub/home claude -p --agent journalist --permission-mode acceptEdits \
-  --mcp-config ~/.claub/config/mcp.json --no-session-persistence \
-  -- "check the latest AI news"
+HOME=~/.claub/home claude --agent journalist --permission-mode acceptEdits \
+  --mcp-config ~/.claub/config/mcp.json --no-session-persistence
 ```
 
 If auth fails, re-symlink credentials: `ln -sf ~/.claude/.credentials.json ~/.claub/home/.claude/.credentials.json`
 
 ### Key Design Decisions
 
-- **Lazy init**: Main agent process starts without blocking on init event — session ID captured from first response
-- **Asyncio lock on stdout**: Prevents concurrent reads from stream-json stdout
-- **`--` separator**: Sub-agent prompts use `--` to prevent argparse from consuming the prompt as a flag argument
+- **All-streaming**: Every agent (including main) runs as a persistent `AgentProcess` using stream-json I/O. No one-shot processes.
+- **Lazy startup**: Agent processes start on first message or scheduled trigger, not eagerly at boot. Supervisor restarts dead processes.
+- **Stream lock inside AgentProcess**: Internal asyncio lock serializes send/receive on the stream-json pipe. No bot-level locks needed.
+- **Lifecycle lock**: Separate lock in AgentProcess protects start/stop/restart transitions from racing with the supervisor.
 - **Isolated HOME**: All Claude processes use `~/.claub/home/` — credentials symlinked, settings/agents/permissions self-contained
 - **acceptEdits permission mode**: All processes run with `--permission-mode acceptEdits`
 - **Config symlinks**: All user-editable config lives in `~/.claub/config/`. `~/.claub/home/.claude/` symlinks to it so Claude Code finds settings in expected locations.

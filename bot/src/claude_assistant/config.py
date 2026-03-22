@@ -20,18 +20,12 @@ class AgentConfig:
 
 @dataclass(frozen=True)
 class AssistantConfig:
-    main_channel_id: str
     agents: dict[str, AgentConfig] = field(default_factory=dict)
 
 
 def load_config(path: Path) -> AssistantConfig:
     with open(path) as f:
         raw = yaml.safe_load(f)
-
-    discord = raw.get("discord", {})
-    main_channel_id = discord.get("main_channel_id")
-    if not main_channel_id:
-        raise ValueError("discord.main_channel_id is required")
 
     agents: dict[str, AgentConfig] = {}
     for name, agent_raw in (raw.get("agents") or {}).items():
@@ -44,4 +38,7 @@ def load_config(path: Path) -> AssistantConfig:
         ]
         agents[name] = AgentConfig(channel_id=channel_id, schedules=schedules)
 
-    return AssistantConfig(main_channel_id=main_channel_id, agents=agents)
+    if "main" not in agents:
+        raise ValueError("agents.main is required")
+
+    return AssistantConfig(agents=agents)

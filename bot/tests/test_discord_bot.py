@@ -9,8 +9,8 @@ from claude_assistant.config import AssistantConfig, AgentConfig, ScheduleEntry
 @pytest.fixture
 def config() -> AssistantConfig:
     return AssistantConfig(
-        main_channel_id="100",
         agents={
+            "main": AgentConfig(channel_id="100"),
             "journalist": AgentConfig(
                 channel_id="200",
                 schedules=[ScheduleEntry(cron="0 9 * * *", prompt="news")],
@@ -30,14 +30,13 @@ def bot(config: AssistantConfig, tmp_path: Path) -> AssistantBot:
 
 
 def test_bot_creates_router(bot: AssistantBot) -> None:
-    assert bot.router.route("100") == ("main", None)
-    assert bot.router.route("200") == ("agent", "journalist")
-    assert bot.router.route("999") == (None, None)
+    assert bot.router.route("100") == "main"
+    assert bot.router.route("200") == "journalist"
+    assert bot.router.route("999") is None
 
 
-def test_bot_creates_agent_locks(bot: AssistantBot) -> None:
-    assert "journalist" in bot._agent_locks
-    assert isinstance(bot._agent_locks["journalist"], asyncio.Lock)
+def test_bot_starts_with_no_processes(bot: AssistantBot) -> None:
+    assert bot._processes == {}
 
 
 @pytest.mark.asyncio
@@ -46,13 +45,14 @@ async def test_handle_reset_main(bot: AssistantBot) -> None:
     msg.channel.id = 100
     msg.channel.send = AsyncMock()
     msg.content = "/clear"
-    bot._main_process = MagicMock()
-    bot._main_process.stop = AsyncMock()
-    # Patch _start_main_agent to avoid spawning real process
-    bot._start_main_agent = AsyncMock()
+    # Put a mock process in place
+    mock_process = MagicMock()
+    mock_process.stop = AsyncMock()
+    bot._processes["main"] = mock_process
     await bot._handle_reset(msg, "/clear")
     bot.sessions.delete.assert_called_with("main")
-    bot._start_main_agent.assert_called_once()
+    mock_process.stop.assert_called_once()
+    assert "main" not in bot._processes
 
 
 @pytest.mark.asyncio

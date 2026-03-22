@@ -32,10 +32,20 @@ def _check_error_event(event: dict) -> None:
         raise RuntimeError(f"Claude error: {msg}")
 
 
-class MainAgentProcess:
-    """Long-running Claude Code process with stream-json I/O."""
+class AgentProcess:
+    """Long-running Claude Code process with stream-json I/O.
 
-    def __init__(self, home_dir: Path, workspace: Path, mcp_configs: list[Path] | None = None, agent_name: str | None = None) -> None:
+    Used for all agents (main and sub-agents alike). Each agent gets its own
+    persistent process that stays alive between messages.
+    """
+
+    def __init__(
+        self,
+        home_dir: Path,
+        workspace: Path,
+        mcp_configs: list[Path] | None = None,
+        agent_name: str | None = None,
+    ) -> None:
         self.home_dir = home_dir
         self.workspace = workspace
         self.mcp_configs = mcp_configs or []
@@ -43,6 +53,7 @@ class MainAgentProcess:
         self._process: asyncio.subprocess.Process | None = None
         self._session_id: str | None = None
         self._lock = asyncio.Lock()
+        self._lifecycle_lock = asyncio.Lock()
         self._ready = asyncio.Event()
 
     def _build_command(self, session_id: str | None) -> list[str]:
@@ -85,26 +96,28 @@ class MainAgentProcess:
         env["HOME"] = str(self.home_dir)
         return env
 
-    async def start(self, session_id: str | None = None) -> str | None:
-        """Start the claude process. Returns immediately — session ID captured lazily."""
-        cmd = self._build_command(session_id)
-        log.info("Starting main agent: %s", " ".join(cmd))
-        self._process = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=self.workspace,
-            env=self._env(),
-            limit=10 * 1024 * 1024,  # 10MB — Claude stream-json can emit large lines
-        )
-        asyncio.create_task(self._drain_stderr())
-        self._ready.set()
-        return self._session_id
+    async def start(self, session_id: str | None = None) -> None:
+        """Start the claude process. Session ID is captured lazily from stream events."""
+        async with self._lifecycle_lock:
+            self._ready.clear()
+            cmd = self._build_command(session_id)
+            log.info("Starting agent %s: %s", self.agent_name or "unnamed", " ".join(cmd))
+            self._process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=self.workspace,
+                env=self._env(),
+                limit=10 * 1024 * 1024,  # 10MB — Claude stream-json can emit large lines
+            )
+            asyncio.create_task(self._drain_stderr())
+            self._ready.set()
 
     async def _drain_stderr(self) -> None:
         """Log stderr from the claude process."""
-        assert self._process and self._process.stderr
+        if not self._process or not self._process.stderr:
+            return
         while True:
             line = await self._process.stderr.readline()
             if not line:
@@ -113,27 +126,33 @@ class MainAgentProcess:
 
     async def send_message(self, content: str, timeout: float = 300) -> str:
         """Send a message and return the result. Timeout in seconds (default 5min)."""
-        await self._ready.wait()
-        assert self._process and self._process.stdin and self._process.stdout
+        try:
+            async with asyncio.timeout(30):
+                await self._ready.wait()
+        except TimeoutError:
+            raise RuntimeError(
+                f"Agent {self.agent_name} not ready within 30s"
+            )
+        if not self._process or not self._process.stdin or not self._process.stdout:
+            raise RuntimeError(f"Agent {self.agent_name} process not started")
         async with self._lock:
             sid = self._session_id or "default"
             msg = self._format_input(content, sid)
             self._process.stdin.write(msg.encode() + b"\n")
             await self._process.stdin.drain()
 
-            # Read until result event (with timeout)
-            # This also captures session_id from init events along the way
             try:
                 return await asyncio.wait_for(
                     self._read_until_result(), timeout=timeout
                 )
             except asyncio.TimeoutError:
                 raise RuntimeError(
-                    f"Claude process did not respond within {timeout}s"
+                    f"Agent {self.agent_name} did not respond within {timeout}s"
                 )
 
     async def _read_until_result(self) -> str:
-        assert self._process and self._process.stdout
+        if not self._process or not self._process.stdout:
+            raise RuntimeError("Process not available")
         while True:
             line = await self._process.stdout.readline()
             if not line:
@@ -145,7 +164,6 @@ class MainAgentProcess:
 
             _check_error_event(event)
 
-            # Capture session_id if we see it
             sid = self._parse_session_id(event)
             if sid:
                 self._session_id = sid
@@ -162,77 +180,11 @@ class MainAgentProcess:
         return self._process is not None and self._process.returncode is None
 
     async def stop(self) -> None:
-        if self._process and self._process.returncode is None:
-            self._process.terminate()
-            try:
-                await asyncio.wait_for(self._process.wait(), timeout=10)
-            except asyncio.TimeoutError:
-                self._process.kill()
-
-
-class SubAgentRunner:
-    """One-shot claude -p runner for sub-agents."""
-
-    def __init__(
-        self, agent_name: str, home_dir: Path, workspace: Path, mcp_configs: list[Path] | None = None
-    ) -> None:
-        self.agent_name = agent_name
-        self.home_dir = home_dir
-        self.workspace = workspace
-        self.mcp_configs = mcp_configs or []
-
-    def _build_command(
-        self, session_id: str | None, prompt: str
-    ) -> list[str]:
-        cmd = [
-            "claude", "-p",
-            "--agent", self.agent_name,
-            "--output-format", "json",
-            "--permission-mode", "acceptEdits",
-        ]
-        if session_id:
-            cmd.extend(["--resume", session_id])
-        if self.mcp_configs:
-            cmd.extend(["--mcp-config"] + [str(p) for p in self.mcp_configs])
-        cmd.extend(["--", prompt])
-        return cmd
-
-    def _env(self) -> dict[str, str]:
-        env = os.environ.copy()
-        env["HOME"] = str(self.home_dir)
-        return env
-
-    async def run(
-        self, prompt: str, session_id: str | None = None, timeout: float = 300
-    ) -> tuple[str, str]:
-        """Run the agent. Returns (result_text, session_id). Timeout in seconds."""
-        cmd = self._build_command(session_id, prompt)
-        log.info("Running sub-agent %s: %s", self.agent_name, " ".join(cmd))
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=self.workspace,
-            env=self._env(),
-        )
-        try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        except asyncio.TimeoutError:
-            proc.kill()
-            raise RuntimeError(
-                f"Sub-agent {self.agent_name} timed out after {timeout}s"
-            )
-        if proc.returncode != 0:
-            stderr_text = stderr.decode()[:500]
-            stdout_text = stdout.decode()[:500]
-            # Check both streams for auth errors before raising generic error
-            _check_auth_error(stderr_text)
-            _check_auth_error(stdout_text)
-            raise RuntimeError(
-                f"Sub-agent {self.agent_name} failed (rc={proc.returncode}): "
-                f"{stderr_text}"
-            )
-        output = json.loads(stdout.decode())
-        # CLI may return an error object instead of a result object
-        _check_error_event(output)
-        return output["result"], output["session_id"]
+        async with self._lifecycle_lock:
+            if self._process and self._process.returncode is None:
+                self._process.terminate()
+                try:
+                    await asyncio.wait_for(self._process.wait(), timeout=10)
+                except asyncio.TimeoutError:
+                    self._process.kill()
+            self._ready.clear()

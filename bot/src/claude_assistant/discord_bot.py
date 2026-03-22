@@ -8,7 +8,7 @@ from pathlib import Path
 import discord
 
 from claude_assistant.chunker import chunk_message
-from claude_assistant.claude_process import AuthenticationError, MainAgentProcess, SubAgentRunner
+from claude_assistant.claude_process import AgentProcess, AuthenticationError
 from claude_assistant.config import AssistantConfig
 from claude_assistant.router import Router
 from claude_assistant.scheduler import Scheduler
@@ -35,10 +35,7 @@ class AssistantBot:
         self.agents_dir = agents_dir
         self.router = Router(config)
 
-        self._agent_locks: dict[str, asyncio.Lock] = {
-            name: asyncio.Lock() for name in config.agents
-        }
-        self._main_process: MainAgentProcess | None = None
+        self._processes: dict[str, AgentProcess] = {}
         self._supervisor_task: asyncio.Task | None = None
         self._shutting_down = False
 
@@ -51,8 +48,7 @@ class AssistantBot:
         @self._client.event
         async def on_ready() -> None:
             log.info("Discord connected as %s", self._client.user)
-            await self._start_main_agent()
-            self._supervisor_task = asyncio.create_task(self._supervise_main())
+            self._supervisor_task = asyncio.create_task(self._supervise_all())
             self._scheduler = Scheduler(self.config, self._handle_scheduled)
             self._scheduler.start()
 
@@ -62,42 +58,57 @@ class AssistantBot:
                 return
             await self._handle_message(message)
 
-    # --- Main agent lifecycle ---
+    # --- Agent process lifecycle ---
 
-    async def _start_main_agent(self) -> None:
-        workspace = self.workspaces_dir / "main"
+    async def _start_agent(self, name: str) -> AgentProcess:
+        """Start (or restart) an agent process. Returns the new process."""
+        workspace = self.workspaces_dir / name
         workspace.mkdir(parents=True, exist_ok=True)
-        self._main_process = MainAgentProcess(
-            home_dir=self.home_dir, workspace=workspace,
-            mcp_configs=self._mcp_configs_for("main"), agent_name="main",
+        process = AgentProcess(
+            home_dir=self.home_dir,
+            workspace=workspace,
+            mcp_configs=self._mcp_configs_for(name),
+            agent_name=name,
         )
-        session_id = self.sessions.get("main")
+        session_id = self.sessions.get(name)
         try:
-            new_sid = await self._main_process.start(session_id)
-            if new_sid:
-                self.sessions.set("main", new_sid)
+            await process.start(session_id)
         except Exception:
-            log.exception("Failed to start main agent")
+            log.exception("Failed to start agent %s", name)
             if session_id:
-                log.info("Retrying without --resume")
-                await self._notify_main("Lost previous context, starting fresh.")
-                self.sessions.delete("main")
-                new_sid = await self._main_process.start(None)
-                if new_sid:
-                    self.sessions.set("main", new_sid)
+                log.info("Retrying %s without --resume", name)
+                self.sessions.delete(name)
+                await process.start(None)
+        self._processes[name] = process
+        return process
 
-    async def _supervise_main(self) -> None:
-        """Background task that monitors the main agent process and restarts it."""
+    async def _get_or_start_process(self, name: str) -> AgentProcess:
+        """Return a live process for the agent, starting one if needed."""
+        process = self._processes.get(name)
+        if process and process.is_alive:
+            return process
+        return await self._start_agent(name)
+
+    async def _restart_process(self, name: str) -> AgentProcess:
+        """Stop an existing process and start a fresh one."""
+        process = self._processes.get(name)
+        if process:
+            await process.stop()
+        return await self._start_agent(name)
+
+    async def _supervise_all(self) -> None:
+        """Background task that monitors all agent processes and restarts dead ones."""
         try:
             while True:
                 await asyncio.sleep(5)
-                if self._main_process and not self._main_process.is_alive:
-                    log.warning("Main agent process died, restarting...")
-                    await self._notify_main("Main agent process died, restarting...")
-                    try:
-                        await self._start_main_agent()
-                    except Exception:
-                        log.exception("Failed to restart main agent")
+                for name, process in list(self._processes.items()):
+                    if not process.is_alive:
+                        log.warning("Agent %s died, restarting...", name)
+                        await self._notify_channel(name, f"Agent `{name}` died, restarting...")
+                        try:
+                            await self._start_agent(name)
+                        except Exception:
+                            log.exception("Failed to restart agent %s", name)
         except asyncio.CancelledError:
             log.info("Supervisor loop cancelled")
             return
@@ -112,85 +123,43 @@ class AssistantBot:
             await self._handle_reset(message, content)
             return
 
-        route_type, agent_name = self.router.route(channel_id)
-        if route_type is None:
+        agent_name = self.router.route(channel_id)
+        if agent_name is None:
             return
 
-        if route_type == "main":
-            await self._handle_main_message(message, content)
-        elif route_type == "agent" and agent_name:
-            await self._handle_agent_message(message, agent_name, content)
-
-    async def _handle_main_message(
-        self, message: discord.Message, content: str
-    ) -> None:
-        if not self._main_process or not self._main_process.is_alive:
-            await self._start_main_agent()
-        assert self._main_process
-
-        async with message.channel.typing():
-            try:
-                result = await self._main_process.send_message(content)
-            except AuthenticationError:
-                log.error("Claude authentication failed")
-                await message.channel.send(
-                    "Claude authentication expired. Re-authenticate with `claude` on the host and restart."
-                )
-                return
-            except RuntimeError:
-                log.exception("Main agent error, restarting")
-                await message.channel.send("Main agent crashed, restarting...")
-                await self._start_main_agent()
-                assert self._main_process
-                result = await self._main_process.send_message(content)
-
-            # Persist session ID (captured lazily during send_message)
-            if self._main_process.session_id:
-                self.sessions.set("main", self._main_process.session_id)
-
-        for chunk in chunk_message(result):
-            await message.channel.send(chunk)
+        await self._handle_agent_message(message, agent_name, content)
 
     async def _handle_agent_message(
         self, message: discord.Message, agent_name: str, content: str
     ) -> None:
-        lock = self._agent_locks.get(agent_name)
-        if not lock:
-            return
-
-        workspace = self.workspaces_dir / agent_name
-        workspace.mkdir(parents=True, exist_ok=True)
-        runner = SubAgentRunner(
-            agent_name=agent_name,
-            home_dir=self.home_dir,
-            workspace=workspace,
-            mcp_configs=self._mcp_configs_for(agent_name),
-        )
-
         async with message.channel.typing():
-            async with lock:
-                session_id = self.sessions.get(agent_name)
-                try:
-                    result, new_sid = await runner.run(content, session_id)
-                    self.sessions.set(agent_name, new_sid)
-                except AuthenticationError:
-                    log.error("Claude authentication failed for agent %s", agent_name)
-                    await message.channel.send(
-                        "Claude authentication expired. Re-authenticate with `claude` on the host and restart."
-                    )
-                    return
-                except RuntimeError:
-                    if session_id:
-                        log.warning("Agent %s resume failed, retrying fresh", agent_name)
-                        await message.channel.send("Lost previous context, starting fresh.")
-                        self.sessions.delete(agent_name)
-                        result, new_sid = await runner.run(content, None)
-                        self.sessions.set(agent_name, new_sid)
-                    else:
-                        raise
+            try:
+                result = await self._send_with_restart(agent_name, content)
+            except AuthenticationError:
+                log.error("Claude authentication failed for %s", agent_name)
+                await message.channel.send(
+                    "Claude authentication expired. Re-authenticate with `claude` on the host and restart."
+                )
+                return
+
+            process = self._processes.get(agent_name)
+            if process and process.session_id:
+                self.sessions.set(agent_name, process.session_id)
 
         for chunk in chunk_message(result):
             await message.channel.send(chunk)
+
+    async def _send_with_restart(self, agent_name: str, content: str) -> str:
+        """Send a message to an agent, restarting the process on failure."""
+        process = await self._get_or_start_process(agent_name)
+        try:
+            return await process.send_message(content)
+        except AuthenticationError:
+            raise
+        except RuntimeError:
+            log.exception("Agent %s error, restarting", agent_name)
+            process = await self._restart_process(agent_name)
+            return await process.send_message(content)
 
     # --- Scheduled tasks ---
 
@@ -201,54 +170,29 @@ class AssistantBot:
 
         channel = self._client.get_channel(int(agent_config.channel_id))
         if not channel or not isinstance(channel, discord.TextChannel):
-            log.error("Channel %s not found for agent %s", agent_config.channel_id, agent_name)
+            log.error("Channel not found for agent %s", agent_name)
             return
 
-        lock = self._agent_locks.get(agent_name)
-        if not lock:
+        try:
+            result = await self._send_with_restart(agent_name, prompt)
+        except AuthenticationError:
+            log.error("Claude authentication failed for scheduled agent %s", agent_name)
+            await channel.send(
+                "Claude authentication expired. Re-authenticate with `claude` on the host and restart."
+            )
             return
-
-        workspace = self.workspaces_dir / agent_name
-        workspace.mkdir(parents=True, exist_ok=True)
-        runner = SubAgentRunner(
-            agent_name=agent_name,
-            home_dir=self.home_dir,
-            workspace=workspace,
-            mcp_configs=self._mcp_configs_for(agent_name),
-        )
-
-        async with lock:
-            session_id = self.sessions.get(agent_name)
-            try:
-                result, new_sid = await runner.run(prompt, session_id)
-                self.sessions.set(agent_name, new_sid)
-            except AuthenticationError:
-                log.error("Claude authentication failed for scheduled agent %s", agent_name)
-                await channel.send(
-                    "Claude authentication expired. Re-authenticate with `claude` on the host and restart."
-                )
-                return
-            except RuntimeError as e:
-                if session_id:
-                    self.sessions.delete(agent_name)
-                    try:
-                        result, new_sid = await runner.run(prompt, None)
-                        self.sessions.set(agent_name, new_sid)
-                    except AuthenticationError:
-                        await channel.send(
-                            "Claude authentication expired. Re-authenticate with `claude` on the host and restart."
-                        )
-                        return
-                    except Exception as e2:
-                        await channel.send(f"Scheduled task failed: {e2}")
-                        return
-                else:
-                    await channel.send(f"Scheduled task failed: {e}")
-                    return
+        except RuntimeError as e:
+            log.exception("Scheduled task failed for %s", agent_name)
+            await channel.send(f"Scheduled task failed: {e}")
+            return
 
         if result.strip().startswith("[NO_POST]"):
             log.info("Agent %s opted out of posting", agent_name)
             return
+
+        process = self._processes.get(agent_name)
+        if process and process.session_id:
+            self.sessions.set(agent_name, process.session_id)
 
         for chunk in chunk_message(result):
             await channel.send(chunk)
@@ -260,28 +204,22 @@ class AssistantBot:
         channel_id = str(message.channel.id)
 
         if len(parts) >= 2:
-            # Explicit agent name: /clear <agent>
             agent_name = parts[1]
         else:
-            # Infer from channel
-            route_type, agent_name = self.router.route(channel_id)
-            if route_type == "main":
-                if self._main_process:
-                    await self._main_process.stop()
-                self.sessions.delete("main")
-                await self._start_main_agent()
-                await message.channel.send("Main agent reset.")
-                return
-            if route_type is None:
+            agent_name = self.router.route(channel_id)
+            if agent_name is None:
                 return
 
-        if not agent_name or agent_name not in self.config.agents:
+        if agent_name not in self.config.agents:
             await message.channel.send(f"Unknown agent: {agent_name}")
             return
+
+        process = self._processes.get(agent_name)
+        if process:
+            await process.stop()
+            del self._processes[agent_name]
         self.sessions.delete(agent_name)
-        await message.channel.send(
-            f"Agent `{agent_name}` session cleared. Next message starts fresh."
-        )
+        await message.channel.send(f"Agent `{agent_name}` reset.")
 
     # --- Utilities ---
 
@@ -296,8 +234,11 @@ class AssistantBot:
                 configs.append(per_agent)
         return configs
 
-    async def _notify_main(self, text: str) -> None:
-        channel = self._client.get_channel(int(self.config.main_channel_id))
+    async def _notify_channel(self, agent_name: str, text: str) -> None:
+        agent_config = self.config.agents.get(agent_name)
+        if not agent_config:
+            return
+        channel = self._client.get_channel(int(agent_config.channel_id))
         if channel and isinstance(channel, discord.TextChannel):
             await channel.send(text)
 
@@ -321,16 +262,10 @@ class AssistantBot:
             self._supervisor_task.cancel()
         if hasattr(self, "_scheduler"):
             self._scheduler.stop()
-        # Wait for in-flight agent invocations (with timeout)
-        for name, lock in self._agent_locks.items():
-            if lock.locked():
-                log.info("Waiting for agent %s to finish...", name)
-                try:
-                    async with asyncio.timeout(60):
-                        async with lock:
-                            pass
-                except TimeoutError:
-                    log.warning("Timed out waiting for agent %s", name)
-        if self._main_process:
-            await self._main_process.stop()
+        # Stop all agent processes in parallel
+        if self._processes:
+            await asyncio.gather(
+                *(p.stop() for p in self._processes.values()),
+                return_exceptions=True,
+            )
         await self._client.close()

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from claude_assistant.claude_process import MainAgentProcess, SubAgentRunner
+from claude_assistant.claude_process import AgentProcess
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("CLAUDE_INTEGRATION_TEST") != "1",
@@ -37,14 +37,13 @@ def workspace(tmp_path: Path) -> Path:
     return ws
 
 
-class TestMainAgentIntegration:
+class TestAgentProcessIntegration:
     @pytest.mark.asyncio
     async def test_start_send_stop(
         self, home_dir: Path, workspace: Path
     ) -> None:
-        proc = MainAgentProcess(home_dir=home_dir, workspace=workspace)
-        sid = await proc.start()
-        assert sid is not None
+        proc = AgentProcess(home_dir=home_dir, workspace=workspace)
+        await proc.start()
 
         result = await proc.send_message(
             "say the word hello and nothing else"
@@ -53,13 +52,3 @@ class TestMainAgentIntegration:
 
         await proc.stop()
         assert not proc.is_alive
-
-
-class TestSubAgentIntegration:
-    @pytest.mark.asyncio
-    async def test_run_and_resume(
-        self, home_dir: Path, workspace: Path
-    ) -> None:
-        # Would need an agent defined in home_dir/.claude/agents/
-        # Skip for now unless agent exists
-        pytest.skip("Requires agent definition setup")
