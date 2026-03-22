@@ -25,13 +25,14 @@ class Scheduler:
 
         for agent_name, agent_config in config.agents.items():
             for i, entry in enumerate(agent_config.schedules):
-                self._scheduler.add_job(
-                    self._run,
-                    trigger=CronTrigger.from_crontab(entry.cron),
-                    args=[agent_name, entry.prompt],
-                    id=f"{agent_name}_schedule_{i}",
-                    name=f"{agent_name}: {entry.prompt[:50]}",
-                )
+                for j, cron in enumerate(entry.crons):
+                    self._scheduler.add_job(
+                        self._run,
+                        trigger=CronTrigger.from_crontab(cron),
+                        args=[agent_name, entry.prompt],
+                        id=f"{agent_name}_schedule_{i}_{j}",
+                        name=f"{agent_name}: {entry.prompt[:50]}",
+                    )
 
     async def _run(self, agent_name: str, prompt: str) -> None:
         jitter = random.uniform(0, 300)  # 0–5 minutes

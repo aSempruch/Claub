@@ -10,14 +10,14 @@ def _config_with_schedule() -> AssistantConfig:
             "main": AgentConfig(
                 channel_id="100",
                 schedules=[
-                    ScheduleEntry(cron="0 8 * * *", prompt="morning review"),
+                    ScheduleEntry(crons=["0 8 * * *"], prompt="morning review"),
                 ],
             ),
             "journalist": AgentConfig(
                 channel_id="200",
                 schedules=[
-                    ScheduleEntry(cron="0 9 * * *", prompt="check news"),
-                    ScheduleEntry(cron="0 17 * * *", prompt="evening summary"),
+                    ScheduleEntry(crons=["0 9 * * *"], prompt="check news"),
+                    ScheduleEntry(crons=["0 17 * * *"], prompt="evening summary"),
                 ],
             ),
         },

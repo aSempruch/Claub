@@ -24,7 +24,8 @@ def test_load_config_with_agents(tmp_path: Path) -> None:
         "  journalist:\n"
         '    channel_id: "456"\n'
         "    schedule:\n"
-        '      - cron: "0 9 * * *"\n'
+        "      - cron:\n"
+        '          - "0 9 * * *"\n'
         '        prompt: "check news"\n'
     )
     config = load_config(cfg_file)
@@ -33,7 +34,7 @@ def test_load_config_with_agents(tmp_path: Path) -> None:
     agent = config.agents["journalist"]
     assert agent.channel_id == "456"
     assert len(agent.schedules) == 1
-    assert agent.schedules[0].cron == "0 9 * * *"
+    assert agent.schedules[0].crons == ["0 9 * * *"]
     assert agent.schedules[0].prompt == "check news"
 
 
@@ -44,7 +45,8 @@ def test_load_config_main_with_schedule(tmp_path: Path) -> None:
         "  main:\n"
         '    channel_id: "123"\n'
         "    schedule:\n"
-        '      - cron: "0 8 * * *"\n'
+        "      - cron:\n"
+        '          - "0 8 * * *"\n'
         '        prompt: "morning review"\n'
     )
     config = load_config(cfg_file)

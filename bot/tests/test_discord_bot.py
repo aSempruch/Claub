@@ -13,7 +13,7 @@ def config() -> AssistantConfig:
             "main": AgentConfig(channel_id="100"),
             "journalist": AgentConfig(
                 channel_id="200",
-                schedules=[ScheduleEntry(cron="0 9 * * *", prompt="news")],
+                schedules=[ScheduleEntry(crons=["0 9 * * *"], prompt="news")],
             ),
         },
     )

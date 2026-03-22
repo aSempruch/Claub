@@ -8,7 +8,7 @@ import yaml
 
 @dataclass(frozen=True)
 class ScheduleEntry:
-    cron: str
+    crons: list[str]
     prompt: str
 
 
@@ -37,7 +37,7 @@ def load_config(path: Path) -> AssistantConfig:
         if not channel_id:
             raise ValueError(f"agents.{name}.channel_id is required")
         schedules = [
-            ScheduleEntry(cron=s["cron"], prompt=s["prompt"])
+            ScheduleEntry(crons=s["cron"], prompt=s["prompt"])
             for s in (agent_raw.get("schedule") or [])
         ]
         agents[name] = AgentConfig(
