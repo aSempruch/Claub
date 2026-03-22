@@ -155,78 +155,7 @@ MCP servers give agents access to external tools (APIs, browsers, etc.) without 
 
 #### Custom MCP Servers
 
-When an agent needs access to an external API or capability, build a small MCP server rather than giving the agent a script to execute. This provides least-privilege access — the agent can only call the tools the server exposes.
-
-**Location:** `~/.claub/mcps/{server-name}/` — keeps custom MCPs with the instance config, not in the repo.
-
-**Structure:** Each MCP server is a minimal Python project using the official `mcp` SDK's `FastMCP`:
-
-```
-~/.claub/mcps/{server-name}/
-  pyproject.toml    # dependencies: mcp[cli], plus any needed libs (httpx, etc.)
-  server.py         # FastMCP server with @mcp.tool() decorated functions
-```
-
-**Minimal server pattern:**
-
-```python
-from mcp.server.fastmcp import FastMCP
-
-mcp = FastMCP("server-name")
-
-@mcp.tool()
-async def my_tool(param: str) -> str:
-    """Tool description — used by Claude to understand when to call it."""
-    # ... implementation ...
-    return result
-
-if __name__ == "__main__":
-    mcp.run(transport="stdio")
-```
-
-**Minimal pyproject.toml** (no build-system needed for script-only servers):
-
-```toml
-[project]
-name = "server-name"
-version = "0.1.0"
-requires-python = ">=3.10"
-dependencies = ["mcp[cli]"]
-```
-
-**Wiring it up:**
-
-1. Create the MCP server in `~/.claub/mcps/{server-name}/`
-2. Run `uv sync` in the server directory to install dependencies
-3. Create `~/.claub/config/agents/{agent-name}.mcp.json`:
-   ```json
-   {
-     "mcpServers": {
-       "server-name": {
-         "command": "uv",
-         "args": ["--directory", "/Users/you/.claub/mcps/{server-name}", "run", "server.py"]
-       }
-     }
-   }
-   ```
-4. Add `"mcp__{server-name}__*"` to the allow list in `~/.claub/config/settings.json`
-5. Update the agent's `.md` prompt to reference the MCP tool instead of scripts
-6. Test with: `cd ~/.claub/workspaces/{agent} && HOME=~/.claub/home claude -p --agent {agent} --permission-mode acceptEdits --mcp-config ~/.claub/config/mcp.json --mcp-config ~/.claub/config/agents/{agent}.mcp.json --no-session-persistence -- "test prompt"`
-
-**Key rules:**
-- Do not use `print()` in MCP servers — it corrupts the stdio JSON-RPC stream. Use `logging` or `print(..., file=sys.stderr)`.
-- Tools can be sync or async. The `@mcp.tool()` decorator auto-generates JSON schema from type hints and docstrings.
-- Prefer MCP servers over giving agents Bash permissions to run scripts — it's more secure and the agent can't modify or escalate beyond the exposed tools.
-
-**Testing MCP servers:** When verifying an MCP tool works, run a plain `claude -p` session with only the MCP config being tested — do not use `--agent`. Agent personas add extra turns (memory reads, in-character responses) that obscure whether the MCP tool actually worked, and shared MCP configs (like Playwright) can mask failures by fetching data through other tools. Test the tool in isolation first:
-
-```bash
-# Good — tests only the leetcode-stats MCP, no agent persona, no shared MCPs
-HOME=~/.claub/home claude -p --permission-mode acceptEdits \
-  --mcp-config ~/.claub/config/agents/leetcode-coach.mcp.json \
-  --no-session-persistence --output-format json \
-  -- "Call mcp__leetcode-stats__get_stats and show the raw result"
-```
+Use the `/build-mcp-server` skill for the full guide on building, wiring, and testing custom MCP servers for agents.
 
 ### Permissions (~/.claub/config/settings.json)
 
