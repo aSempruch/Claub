@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+import random
 from collections.abc import Awaitable, Callable
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -32,6 +34,9 @@ class Scheduler:
                 )
 
     async def _run(self, agent_name: str, prompt: str) -> None:
+        jitter = random.uniform(0, 300)  # 0–5 minutes
+        log.info("Scheduled task for %s — delaying %.0fs", agent_name, jitter)
+        await asyncio.sleep(jitter)
         log.info("Scheduled task firing for %s", agent_name)
         prefixed = f"[scheduled] {prompt}"
         await self._callback(agent_name, prefixed)
