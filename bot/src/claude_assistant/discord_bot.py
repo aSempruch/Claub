@@ -248,7 +248,7 @@ class AssistantBot:
     ) -> None:
         """Send a message as the agent, using app identity or webhook per config."""
         agent_config = self.config.agents.get(agent_name)
-        if agent_config and agent_config.use_app_identity:
+        if not agent_config or not agent_config.display_name:
             await channel.send(content)
         else:
             await self._webhook_send(channel, agent_name, content)
