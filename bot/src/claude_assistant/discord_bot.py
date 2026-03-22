@@ -57,6 +57,8 @@ class AssistantBot:
         async def on_message(message: discord.Message) -> None:
             if message.author == self._client.user or message.author.bot:
                 return
+            if self.config.allowed_user_ids and str(message.author.id) not in self.config.allowed_user_ids:
+                return
             await self._handle_message(message)
 
     # --- Agent process lifecycle ---

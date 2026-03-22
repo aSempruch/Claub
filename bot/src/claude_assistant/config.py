@@ -23,6 +23,7 @@ class AgentConfig:
 @dataclass(frozen=True)
 class AssistantConfig:
     agents: dict[str, AgentConfig] = field(default_factory=dict)
+    allowed_user_ids: set[str] = field(default_factory=set)
 
 
 def load_config(path: Path) -> AssistantConfig:
@@ -48,4 +49,6 @@ def load_config(path: Path) -> AssistantConfig:
     if "main" not in agents:
         raise ValueError("agents.main is required")
 
-    return AssistantConfig(agents=agents)
+    allowed_user_ids = set(raw.get("allowed_user_ids") or [])
+
+    return AssistantConfig(agents=agents, allowed_user_ids=allowed_user_ids)
