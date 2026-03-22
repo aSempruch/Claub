@@ -67,11 +67,13 @@ class AssistantBot:
         """Start (or restart) an agent process. Returns the new process."""
         workspace = self.workspaces_dir / name
         workspace.mkdir(parents=True, exist_ok=True)
+        agent_config = self.config.agents.get(name)
         process = AgentProcess(
             home_dir=self.home_dir,
             workspace=workspace,
             mcp_configs=self._mcp_configs_for(name),
             agent_name=name,
+            allowed_tools_additional=agent_config.allowed_tools_additional if agent_config else [],
         )
         session_id = self.sessions.get(name)
         try:

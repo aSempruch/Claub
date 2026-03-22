@@ -45,11 +45,13 @@ class AgentProcess:
         workspace: Path,
         mcp_configs: list[Path] | None = None,
         agent_name: str | None = None,
+        allowed_tools_additional: list[str] | None = None,
     ) -> None:
         self.home_dir = home_dir
         self.workspace = workspace
         self.mcp_configs = mcp_configs or []
         self.agent_name = agent_name
+        self.allowed_tools_additional = allowed_tools_additional or []
         self._process: asyncio.subprocess.Process | None = None
         self._session_id: str | None = None
         self._lock = asyncio.Lock()
@@ -68,6 +70,8 @@ class AgentProcess:
             cmd.extend(["--agent", self.agent_name])
         if self.mcp_configs:
             cmd.extend(["--mcp-config"] + [str(p) for p in self.mcp_configs])
+        if self.allowed_tools_additional:
+            cmd.extend(["--allowedTools"] + self.allowed_tools_additional)
         if session_id:
             cmd.extend(["--resume", session_id])
         return cmd
