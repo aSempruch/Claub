@@ -16,6 +16,8 @@ class ScheduleEntry:
 class AgentConfig:
     channel_id: str
     schedules: list[ScheduleEntry] = field(default_factory=list)
+    display_name: str | None = None
+    avatar_url: str | None = None
 
 
 @dataclass(frozen=True)
@@ -36,7 +38,12 @@ def load_config(path: Path) -> AssistantConfig:
             ScheduleEntry(cron=s["cron"], prompt=s["prompt"])
             for s in (agent_raw.get("schedule") or [])
         ]
-        agents[name] = AgentConfig(channel_id=channel_id, schedules=schedules)
+        agents[name] = AgentConfig(
+            channel_id=channel_id,
+            schedules=schedules,
+            display_name=(agent_raw or {}).get("display_name"),
+            avatar_url=(agent_raw or {}).get("avatar_url"),
+        )
 
     if "main" not in agents:
         raise ValueError("agents.main is required")

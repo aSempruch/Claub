@@ -36,6 +36,7 @@ class AssistantBot:
         self.router = Router(config)
 
         self._processes: dict[str, AgentProcess] = {}
+        self._webhooks: dict[int, discord.Webhook] = {}  # channel_id -> webhook
         self._supervisor_task: asyncio.Task | None = None
         self._shutting_down = False
 
@@ -147,7 +148,7 @@ class AssistantBot:
                 self.sessions.set(agent_name, process.session_id)
 
         for chunk in chunk_message(result):
-            await message.channel.send(chunk)
+            await self._webhook_send(message.channel, agent_name, chunk)
 
     async def _send_with_restart(self, agent_name: str, content: str) -> str:
         """Send a message to an agent, restarting the process on failure."""
@@ -195,7 +196,7 @@ class AssistantBot:
             self.sessions.set(agent_name, process.session_id)
 
         for chunk in chunk_message(result):
-            await channel.send(chunk)
+            await self._webhook_send(channel, agent_name, chunk)
 
     # --- Commands ---
 
@@ -220,6 +221,38 @@ class AssistantBot:
             del self._processes[agent_name]
         self.sessions.delete(agent_name)
         await message.channel.send(f"Agent `{agent_name}` reset.")
+
+    # --- Webhook sending ---
+
+    async def _get_or_create_webhook(
+        self, channel: discord.TextChannel
+    ) -> discord.Webhook:
+        """Return a cached webhook for the channel, creating one if needed."""
+        if channel.id in self._webhooks:
+            return self._webhooks[channel.id]
+        for wh in await channel.webhooks():
+            if wh.name == "claub-agent":
+                self._webhooks[channel.id] = wh
+                return wh
+        wh = await channel.create_webhook(name="claub-agent")
+        self._webhooks[channel.id] = wh
+        return wh
+
+    async def _webhook_send(
+        self,
+        channel: discord.TextChannel,
+        agent_name: str,
+        content: str,
+    ) -> None:
+        """Send a message as the agent via webhook with custom name/avatar."""
+        agent_config = self.config.agents.get(agent_name)
+        webhook = await self._get_or_create_webhook(channel)
+        kwargs: dict = {"content": content}
+        if agent_config and agent_config.display_name:
+            kwargs["username"] = agent_config.display_name
+        if agent_config and agent_config.avatar_url:
+            kwargs["avatar_url"] = agent_config.avatar_url
+        await webhook.send(**kwargs)
 
     # --- Utilities ---
 
