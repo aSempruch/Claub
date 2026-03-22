@@ -128,8 +128,8 @@ class AgentProcess:
                 return
             log.debug("claude stderr: %s", line.decode().strip())
 
-    async def send_message(self, content: str, timeout: float = 300) -> str:
-        """Send a message and return the result. Timeout in seconds (default 5min)."""
+    async def send_message(self, content: str, timeout: float = 900) -> str:
+        """Send a message and return the result. Timeout in seconds (default 15min)."""
         try:
             async with asyncio.timeout(30):
                 await self._ready.wait()
