@@ -118,21 +118,30 @@ An `agents.main` entry is required.
 
 > **Note:** Do not add `[scheduled]` to cron prompts in `agents.yaml` — the bot prefixes it automatically at runtime (see `scheduler.py`).
 
-### Agent Context
+### Agent Context — The Three-Level Split
 
-Agent behavior is configured at two levels:
+Agent behavior is configured at three levels. Getting this split right matters — putting the wrong thing at the wrong level leads to either rigid agents that can't adapt or unstable agents that lose their identity.
 
-- **`~/.claub/config/CLAUDE.md`** — Global guidelines that apply to all agents: safety rules, Discord behavior, workspace usage, and the memory protocol. Loaded automatically via the isolated HOME's symlink.
-- **`~/.claub/config/agents/{name}.md`** — Per-agent identity: role, personality, task instructions, and agent-specific memory structure (what to track, how to organize it, retention policies). Passed to Claude via `--agent {name}`.
+**Level 1: Global** (`~/.claub/config/CLAUDE.md`) — Rules that apply to **all** agents: safety, Discord behavior, workspace usage, memory protocol. Loaded automatically via the isolated HOME's symlink.
 
-Each agent also gets a workspace directory at `~/.claub/workspaces/{name}/`. These are **runtime scratch directories** created automatically. Agents can write files, create their own `CLAUDE.md`, or store data there as they see fit.
+**Level 2: Agent identity** (`~/.claub/config/agents/{name}.md`) — The agent's **stable core**: personality, communication style, role definition, capabilities, and memory structure. This is **who the agent is** — it should rarely change. Think of it as the agent's DNA. Does NOT include:
+- Specific targets, criteria, or parameters that the user might adjust (those go in workspace CLAUDE.md)
+- Scheduled task instructions (those go in the cron `prompt` in agents.yaml)
+- Runtime state or progress tracking (that goes in memory)
+
+**Level 3: Living config** (`~/.claub/workspaces/{name}/CLAUDE.md`) — The **fluid details** the agent works with day-to-day: current targets, search criteria, focus areas, topic lists, thresholds. The agent can self-modify this file when the user asks to shift focus (e.g., "stop covering crypto", "raise my comp target to $180k"). The agent `.md` should reference this file and tell the agent it exists.
+
+**Rule of thumb:** If you'd change it by editing the agent's personality, it's Level 2. If you'd change it by telling the agent "from now on, focus on X instead of Y", it's Level 3.
+
+Each agent also gets a workspace directory at `~/.claub/workspaces/{name}/`. These are **runtime scratch directories** created automatically. Agents can write files or store data there as they see fit.
 
 ### Adding a New Agent
 
-1. Add entry to `~/.claub/config/agents.yaml` with `channel_id` and optional `schedule`
-2. Create `~/.claub/config/agents/{name}.md` with the agent's system prompt (must include YAML frontmatter with `name` and `description`)
-3. Optionally create `~/.claub/config/agents/{name}.mcp.json` for agent-specific MCP servers
-4. Restart the bot
+1. Add entry to `~/.claub/config/agents.yaml` with `channel_id` and optional `schedule` (cron prompts should contain the task instructions, not the agent `.md`)
+2. Create `~/.claub/config/agents/{name}.md` — stable identity only (personality, style, capabilities, memory structure). Must include YAML frontmatter with `name` and `description`. Reference the workspace CLAUDE.md so the agent knows to read it.
+3. Create `~/.claub/workspaces/{name}/CLAUDE.md` — fluid details the agent works with (targets, criteria, focus areas). The agent can self-modify this file.
+4. Optionally create `~/.claub/config/agents/{name}.mcp.json` for agent-specific MCP servers
+5. Restart the bot
 
 ### MCP Servers
 
