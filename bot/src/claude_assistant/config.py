@@ -18,6 +18,7 @@ class AgentConfig:
     schedules: list[ScheduleEntry] = field(default_factory=list)
     display_name: str | None = None
     avatar_url: str | None = None
+    use_app_identity: bool = False
 
 
 @dataclass(frozen=True)
@@ -44,6 +45,7 @@ def load_config(path: Path) -> AssistantConfig:
             schedules=schedules,
             display_name=(agent_raw or {}).get("display_name"),
             avatar_url=(agent_raw or {}).get("avatar_url"),
+            use_app_identity=bool((agent_raw or {}).get("use_app_identity", False)),
         )
 
     if "main" not in agents:

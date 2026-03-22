@@ -150,7 +150,7 @@ class AssistantBot:
                 self.sessions.set(agent_name, process.session_id)
 
         for chunk in chunk_message(result):
-            await self._webhook_send(message.channel, agent_name, chunk)
+            await self._send_response(message.channel, agent_name, chunk)
 
     async def _send_with_restart(self, agent_name: str, content: str) -> str:
         """Send a message to an agent, restarting the process on failure."""
@@ -198,7 +198,7 @@ class AssistantBot:
             self.sessions.set(agent_name, process.session_id)
 
         for chunk in chunk_message(result):
-            await self._webhook_send(channel, agent_name, chunk)
+            await self._send_response(channel, agent_name, chunk)
 
     # --- Commands ---
 
@@ -239,6 +239,19 @@ class AssistantBot:
         wh = await channel.create_webhook(name="claub-agent")
         self._webhooks[channel.id] = wh
         return wh
+
+    async def _send_response(
+        self,
+        channel: discord.TextChannel,
+        agent_name: str,
+        content: str,
+    ) -> None:
+        """Send a message as the agent, using app identity or webhook per config."""
+        agent_config = self.config.agents.get(agent_name)
+        if agent_config and agent_config.use_app_identity:
+            await channel.send(content)
+        else:
+            await self._webhook_send(channel, agent_name, content)
 
     async def _webhook_send(
         self,
