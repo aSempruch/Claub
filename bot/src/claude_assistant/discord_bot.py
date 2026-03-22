@@ -74,6 +74,7 @@ class AssistantBot:
             mcp_configs=self._mcp_configs_for(name),
             agent_name=name,
             allowed_tools_additional=agent_config.allowed_tools_additional if agent_config else [],
+            model=self.config.model,
         )
         session_id = self.sessions.get(name)
         try:
