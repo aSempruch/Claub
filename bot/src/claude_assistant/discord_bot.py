@@ -43,7 +43,7 @@ class AssistantBot:
         self._shutting_down = False
         self._last_activity: dict[str, float] = {}  # agent name -> timestamp
         self._reaped: set[str] = set()  # agents intentionally killed by idle reaper
-        self._idle_timeout = 3600  # kill idle processes after 1 hour
+        self._idle_timeout = 600  # kill idle processes after 10 minutes
 
         intents = discord.Intents.default()
         intents.message_content = True
