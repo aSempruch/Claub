@@ -18,7 +18,8 @@ cd ~/.claub/home/.claude
 ln -s ../../config/agents agents
 ln -s ../../config/CLAUDE.md CLAUDE.md
 ln -s ../../config/settings.json settings.json
-ln -s ~/.claude/.credentials.json .credentials.json
+# Authenticate separately for the bot's isolated HOME
+HOME=~/.claub/home claude  # follow login flow, then exit
 
 # Add your config files (agents.yaml, CLAUDE.md, settings.json, mcp.json, agents/*.md)
 # See Configuration section below
@@ -48,7 +49,7 @@ AssistantBot (discord.py)
         └─ Fires any agent on cron schedules (including main)
 ```
 
-All Claude processes run with an **isolated HOME** (`~/.claub/home/`) — separate from the user's real `~/.claude`. Credentials are symlinked from the real home.
+All Claude processes run with an **isolated HOME** (`~/.claub/home/`) — separate from the user's real `~/.claude`. Credentials live in `~/.claub/home/.claude/.credentials.json` (its own file, not symlinked).
 
 ## Project Structure
 
@@ -85,7 +86,7 @@ scripts/                          # Service management
     agents/ → ../../config/agents/
     settings.json → ../../config/settings.json
     CLAUDE.md → ../../config/CLAUDE.md
-    .credentials.json → ~/.claude/.credentials.json
+    .credentials.json                 # Own credentials (not symlinked)
   mcps/                           # Custom MCP servers (one dir per server)
     leetcode-stats/               # Example: LeetCode GraphQL API wrapper
       pyproject.toml
@@ -295,7 +296,7 @@ HOME=~/.claub/home claude --agent journalist --permission-mode acceptEdits \
   --mcp-config ~/.claub/config/mcp.json --no-session-persistence
 ```
 
-If auth fails, re-symlink credentials: `ln -sf ~/.claude/.credentials.json ~/.claub/home/.claude/.credentials.json`
+If auth fails, re-authenticate: `HOME=~/.claub/home claude` and follow the login flow.
 
 ### Key Design Decisions
 
@@ -303,7 +304,8 @@ If auth fails, re-symlink credentials: `ln -sf ~/.claude/.credentials.json ~/.cl
 - **Lazy startup**: Agent processes start on first message or scheduled trigger, not eagerly at boot. Supervisor restarts dead processes.
 - **Stream lock inside AgentProcess**: Internal asyncio lock serializes send/receive on the stream-json pipe. No bot-level locks needed.
 - **Lifecycle lock**: Separate lock in AgentProcess protects start/stop/restart transitions from racing with the supervisor.
-- **Isolated HOME**: All Claude processes use `~/.claub/home/` — credentials symlinked, settings/agents/permissions self-contained
+- **Idle reaper**: Background task kills agent processes after 1 hour of inactivity. Prevents stale processes from holding expiring OAuth tokens, which caused auth races when multiple long-lived processes shared the same credentials file. A `_reaped` set prevents the supervisor from immediately restarting intentionally killed processes. If the idle reaper alone isn't sufficient, a global agent lock is stashed (`git stash list` — `agent-lock: serialize API calls via asyncio.Lock`) that serializes all API calls so only one agent talks to Claude at a time.
+- **Isolated HOME**: All Claude processes use `~/.claub/home/` — own credentials file, settings/agents/permissions self-contained
 - **acceptEdits permission mode**: All processes run with `--permission-mode acceptEdits`
 - **Config symlinks**: All user-editable config lives in `~/.claub/config/`. `~/.claub/home/.claude/` symlinks to it so Claude Code finds settings in expected locations.
 - **Separated instance from source**: Bot code lives in the repo; user config and runtime state live in `~/.claub/` (overridable via `CLAUB_HOME` env var).
