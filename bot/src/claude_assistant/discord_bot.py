@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
+import time
 from pathlib import Path
 
 import discord
@@ -38,7 +39,12 @@ class AssistantBot:
         self._processes: dict[str, AgentProcess] = {}
         self._webhooks: dict[int, discord.Webhook] = {}  # channel_id -> webhook
         self._supervisor_task: asyncio.Task | None = None
+        self._idle_reaper_task: asyncio.Task | None = None
         self._shutting_down = False
+        self._agent_lock = asyncio.Lock()  # serialize all agent API calls
+        self._last_activity: dict[str, float] = {}  # agent name -> timestamp
+        self._reaped: set[str] = set()  # agents intentionally killed by idle reaper
+        self._idle_timeout = 3600  # kill idle processes after 1 hour
 
         intents = discord.Intents.default()
         intents.message_content = True
@@ -50,6 +56,7 @@ class AssistantBot:
         async def on_ready() -> None:
             log.info("Discord connected as %s", self._client.user)
             self._supervisor_task = asyncio.create_task(self._supervise_all())
+            self._idle_reaper_task = asyncio.create_task(self._reap_idle_processes())
             self._scheduler = Scheduler(self.config, self._handle_scheduled)
             self._scheduler.start()
 
@@ -108,7 +115,7 @@ class AssistantBot:
             while True:
                 await asyncio.sleep(5)
                 for name, process in list(self._processes.items()):
-                    if not process.is_alive:
+                    if not process.is_alive and name not in self._reaped:
                         log.warning("Agent %s died, restarting...", name)
                         await self._notify_channel(name, f"Agent `{name}` died, restarting...")
                         try:
@@ -117,6 +124,28 @@ class AssistantBot:
                             log.exception("Failed to restart agent %s", name)
         except asyncio.CancelledError:
             log.info("Supervisor loop cancelled")
+            return
+
+    async def _reap_idle_processes(self) -> None:
+        """Kill agent processes that have been idle longer than _idle_timeout."""
+        try:
+            while True:
+                await asyncio.sleep(60)
+                now = time.monotonic()
+                for name, process in list(self._processes.items()):
+                    if not process.is_alive:
+                        continue
+                    last = self._last_activity.get(name, 0)
+                    idle_secs = now - last if last else 0
+                    if last and idle_secs > self._idle_timeout:
+                        log.info(
+                            "Reaping idle agent %s (idle %.0fs)", name, idle_secs
+                        )
+                        self._reaped.add(name)
+                        await process.stop()
+                        del self._processes[name]
+        except asyncio.CancelledError:
+            log.info("Idle reaper cancelled")
             return
 
     # --- Message handling ---
@@ -155,16 +184,27 @@ class AssistantBot:
         await self._send_chunked(message.channel, agent_name, result)
 
     async def _send_with_restart(self, agent_name: str, content: str) -> str:
-        """Send a message to an agent, restarting the process on failure."""
-        process = await self._get_or_start_process(agent_name)
-        try:
-            return await process.send_message(content)
-        except AuthenticationError:
-            raise
-        except RuntimeError:
-            log.exception("Agent %s error, restarting", agent_name)
-            process = await self._restart_process(agent_name)
-            return await process.send_message(content)
+        """Send a message to an agent, restarting the process on failure.
+
+        Serialized via _agent_lock to prevent concurrent API calls that
+        race on OAuth token refresh (all agents share one credentials file).
+        """
+        if self._agent_lock.locked():
+            log.info("Agent %s waiting for agent lock", agent_name)
+        async with self._agent_lock:
+            self._reaped.discard(agent_name)
+            self._last_activity[agent_name] = time.monotonic()
+            process = await self._get_or_start_process(agent_name)
+            try:
+                result = await process.send_message(content)
+            except AuthenticationError:
+                raise
+            except RuntimeError:
+                log.exception("Agent %s error, restarting", agent_name)
+                process = await self._restart_process(agent_name)
+                result = await process.send_message(content)
+            self._last_activity[agent_name] = time.monotonic()
+            return result
 
     # --- Scheduled tasks ---
 
@@ -222,6 +262,8 @@ class AssistantBot:
         if process:
             await process.stop()
             del self._processes[agent_name]
+        self._last_activity.pop(agent_name, None)
+        self._reaped.discard(agent_name)
         self.sessions.delete(agent_name)
         await message.channel.send(f"Agent `{agent_name}` reset.")
 
@@ -324,6 +366,8 @@ class AssistantBot:
         log.info("Shutting down...")
         if self._supervisor_task:
             self._supervisor_task.cancel()
+        if self._idle_reaper_task:
+            self._idle_reaper_task.cancel()
         if hasattr(self, "_scheduler"):
             self._scheduler.stop()
         # Stop all agent processes in parallel
