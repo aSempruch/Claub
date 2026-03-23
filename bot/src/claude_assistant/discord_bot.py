@@ -152,8 +152,7 @@ class AssistantBot:
             if process and process.session_id:
                 self.sessions.set(agent_name, process.session_id)
 
-        for chunk in chunk_message(result):
-            await self._send_response(message.channel, agent_name, chunk)
+        await self._send_chunked(message.channel, agent_name, result)
 
     async def _send_with_restart(self, agent_name: str, content: str) -> str:
         """Send a message to an agent, restarting the process on failure."""
@@ -200,8 +199,7 @@ class AssistantBot:
         if process and process.session_id:
             self.sessions.set(agent_name, process.session_id)
 
-        for chunk in chunk_message(result):
-            await self._send_response(channel, agent_name, chunk)
+        await self._send_chunked(channel, agent_name, result)
 
     # --- Commands ---
 
@@ -242,6 +240,21 @@ class AssistantBot:
         wh = await channel.create_webhook(name="claub-agent")
         self._webhooks[channel.id] = wh
         return wh
+
+    async def _send_chunked(
+        self,
+        channel: discord.TextChannel,
+        agent_name: str,
+        result: str,
+    ) -> None:
+        """Chunk a result and send non-empty pieces to Discord."""
+        chunks = chunk_message(result)
+        if not chunks or all(not c.strip() for c in chunks):
+            log.warning("Agent %s returned empty response", agent_name)
+            return
+        for chunk in chunks:
+            if chunk.strip():
+                await self._send_response(channel, agent_name, chunk)
 
     async def _send_response(
         self,
