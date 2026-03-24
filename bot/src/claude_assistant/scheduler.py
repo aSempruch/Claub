@@ -12,7 +12,15 @@ from claude_assistant.schedule_store import ScheduleStore
 
 log = logging.getLogger(__name__)
 
-SCHEDULE_JITTER_MAX = 900  # seconds — random delay before firing scheduled tasks
+JITTER_MU = 5.5       # lognormal mean parameter (~245s median)
+JITTER_SIGMA = 0.4    # lognormal spread parameter
+JITTER_MAX = 900      # hard cap in seconds
+
+
+def lognormal_jitter(mu: float = JITTER_MU, sigma: float = JITTER_SIGMA, max_delay: float = JITTER_MAX) -> float:
+    """Return a lognormal-distributed delay in seconds, clamped to *max_delay*."""
+    return min(random.lognormvariate(mu, sigma), max_delay)
+
 
 ScheduleCallback = Callable[[str, str], Awaitable[None]]
 
@@ -65,7 +73,7 @@ class Scheduler:
             log.debug("Job %s not found in scheduler", job_id)
 
     async def _run(self, agent_name: str, prompt: str) -> None:
-        jitter = random.uniform(0, SCHEDULE_JITTER_MAX)
+        jitter = lognormal_jitter()
         log.info("Scheduled task for %s — delaying %.0fs", agent_name, jitter)
         await asyncio.sleep(jitter)
         log.info("Scheduled task firing for %s", agent_name)
@@ -81,7 +89,7 @@ class Scheduler:
             except Exception:
                 pass
         log.info("One-shot schedule %s for %s — firing and removing", entry_id, agent_name)
-        jitter = random.uniform(0, SCHEDULE_JITTER_MAX)
+        jitter = lognormal_jitter()
         await asyncio.sleep(jitter)
         prefixed = f"[scheduled] {prompt}"
         await self._callback(agent_name, prefixed)
