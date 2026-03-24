@@ -3,6 +3,7 @@ services:
     build: .
     environment:
       - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
+      - TZ=America/New_York
     volumes:
       - claude-home:/root/.claude
       - ~/docker/claub:/claub
