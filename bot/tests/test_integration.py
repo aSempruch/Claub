@@ -18,19 +18,6 @@ pytestmark = pytest.mark.skipif(
 
 
 @pytest.fixture
-def home_dir(tmp_path: Path) -> Path:
-    home = tmp_path / "home"
-    home.mkdir()
-    claude_dir = home / ".claude"
-    claude_dir.mkdir()
-    # Copy real credentials
-    real_creds = Path.home() / ".claude" / ".credentials.json"
-    if real_creds.exists():
-        (claude_dir / ".credentials.json").write_text(real_creds.read_text())
-    return home
-
-
-@pytest.fixture
 def workspace(tmp_path: Path) -> Path:
     ws = tmp_path / "workspace"
     ws.mkdir()
@@ -40,9 +27,9 @@ def workspace(tmp_path: Path) -> Path:
 class TestAgentProcessIntegration:
     @pytest.mark.asyncio
     async def test_start_send_stop(
-        self, home_dir: Path, workspace: Path
+        self, workspace: Path
     ) -> None:
-        proc = AgentProcess(home_dir=home_dir, workspace=workspace)
+        proc = AgentProcess(workspace=workspace)
         await proc.start()
 
         result = await proc.send_message(
