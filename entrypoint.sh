@@ -3,6 +3,10 @@ set -e
 
 # Copy config files into Claude CLI's native home
 mkdir -p ~/.claude
+
+# Persist ~/.claude.json inside the claude-home volume via symlink
+touch -a ~/.claude/claude-symlink.json
+ln -sf ~/.claude/claude-symlink.json ~/.claude.json
 if [ -d "/claub/config/agents" ]; then
     cp -r /claub/config/agents ~/.claude/agents
 fi
