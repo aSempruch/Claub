@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Awaitable, Callable
 
 import fastmcp
 from apscheduler.triggers.cron import CronTrigger
@@ -25,6 +26,9 @@ from claude_assistant.schedule_store import ScheduleStore
 from claude_assistant.scheduler import Scheduler
 
 log = logging.getLogger(__name__)
+
+# Optional callback: (agent_name, message) -> Awaitable[None]
+NotifyCallback = Callable[[str, str], Awaitable[None]] | None
 
 
 # ---------------------------------------------------------------------------
@@ -45,6 +49,7 @@ async def _create_schedule(
     one_shot: bool,
     store: ScheduleStore,
     scheduler: Scheduler,
+    notify: NotifyCallback = None,
 ) -> str:
     """Validate *cron*, persist the entry, register the APScheduler job.
 
@@ -62,6 +67,10 @@ async def _create_schedule(
         scheduler.add_job(agent, entry["id"], cron, prompt, one_shot=one_shot)
 
     log.info("Created schedule %s for %s: %r", entry["id"], agent, prompt)
+    shot_label = "one-shot " if one_shot else ""
+    msg = f"Schedule created: {shot_label}`{cron}` — {prompt}"
+    if notify:
+        await notify(agent, msg)
     return f"Created schedule {entry['id']}: {prompt!r} at {cron}"
 
 
@@ -70,12 +79,17 @@ async def _delete_schedule(
     entry_id: str,
     store: ScheduleStore,
     scheduler: Scheduler,
+    notify: NotifyCallback = None,
 ) -> str:
     """Remove the entry from the store and de-register its APScheduler job.
 
     Returns a confirmation string, or an error message if the entry is not
     found for *agent*.
     """
+    # Grab entry details before deleting (for notification)
+    entries = store.list(agent)
+    entry_info = next((e for e in entries if e["id"] == entry_id), None)
+
     async with store.lock:
         deleted = store.delete(agent, entry_id)
         if not deleted:
@@ -83,6 +97,9 @@ async def _delete_schedule(
         scheduler.remove_job(agent, entry_id)
 
     log.info("Deleted schedule %s for %s", entry_id, agent)
+    if notify and entry_info:
+        msg = f"Schedule deleted: `{entry_info['cron']}` — {entry_info['prompt']}"
+        await notify(agent, msg)
     return f"Deleted schedule {entry_id}"
 
 
@@ -91,7 +108,11 @@ async def _delete_schedule(
 # ---------------------------------------------------------------------------
 
 
-def create_mcp_server(store: ScheduleStore, scheduler: Scheduler) -> fastmcp.FastMCP:
+def create_mcp_server(
+    store: ScheduleStore,
+    scheduler: Scheduler,
+    notify: NotifyCallback = None,
+) -> fastmcp.FastMCP:
     """Create and return a FastMCP server with schedule management tools.
 
     The returned server exposes three tools:
@@ -135,7 +156,7 @@ def create_mcp_server(store: ScheduleStore, scheduler: Scheduler) -> fastmcp.Fas
         agent = _get_agent(request)
         if not agent:
             return "Error: missing X-Agent-Name header"
-        return await _create_schedule(agent, cron, prompt, one_shot, store, scheduler)
+        return await _create_schedule(agent, cron, prompt, one_shot, store, scheduler, notify)
 
     @mcp.tool()
     async def delete_schedule(
@@ -151,6 +172,6 @@ def create_mcp_server(store: ScheduleStore, scheduler: Scheduler) -> fastmcp.Fas
         agent = _get_agent(request)
         if not agent:
             return "Error: missing X-Agent-Name header"
-        return await _delete_schedule(agent, id, store, scheduler)
+        return await _delete_schedule(agent, id, store, scheduler, notify)
 
     return mcp

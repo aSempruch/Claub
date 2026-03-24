@@ -158,7 +158,7 @@ class AssistantBot:
     async def _start_mcp_server(self) -> None:
         import uvicorn
 
-        mcp = create_mcp_server(self.schedule_store, self._scheduler)
+        mcp = create_mcp_server(self.schedule_store, self._scheduler, notify=self._notify_channel)
         app = mcp.http_app()
         config = uvicorn.Config(app, host="127.0.0.1", port=self.mcp_port, log_level="warning")
         self._uvicorn_server = uvicorn.Server(config)
