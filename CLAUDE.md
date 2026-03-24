@@ -69,7 +69,7 @@ bot/                              # Python package (discord bot)
 
 Dockerfile                        # Python 3.12 + Node.js + uv + Claude CLI
 entrypoint.sh                     # Copies config into ~/.claude/, starts bot
-docker-compose.yml                # Service definition with volumes
+docker-compose.yml                # Service definition with volumes — ALL docker compose commands run from this project root
 .dockerignore                     # Build context exclusions
 
 scripts/                          # Legacy service management (launchd, pre-Docker)
