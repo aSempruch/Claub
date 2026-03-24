@@ -5,10 +5,7 @@ services:
       - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
     volumes:
       - claude-home:/root/.claude
-      - ./instance/config:/claub/config
-      - ./instance/data:/claub/data
-      - ./instance/workspaces:/claub/workspaces
-      - ./instance/mcps:/claub/mcps
+      - ~/docker/claub:/claub
     init: true
     restart: unless-stopped
     healthcheck:

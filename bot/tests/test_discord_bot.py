@@ -21,7 +21,6 @@ def bot(config: AssistantConfig, tmp_path: Path) -> AssistantBot:
     from claude_assistant.schedule_store import ScheduleStore
     return AssistantBot(
         config=config,
-        home_dir=tmp_path / "home",
         workspaces_dir=tmp_path / "workspaces",
         session_store=MagicMock(),
         schedule_store=ScheduleStore(tmp_path / "schedules.json"),

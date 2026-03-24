@@ -24,7 +24,6 @@ class AssistantBot:
     def __init__(
         self,
         config: AssistantConfig,
-        home_dir: Path,
         workspaces_dir: Path,
         session_store: SessionStore,
         schedule_store: ScheduleStore,
@@ -33,7 +32,6 @@ class AssistantBot:
         mcp_port: int = 9400,
     ) -> None:
         self.config = config
-        self.home_dir = home_dir
         self.workspaces_dir = workspaces_dir
         self.sessions = session_store
         self.schedule_store = schedule_store
@@ -84,7 +82,6 @@ class AssistantBot:
         workspace.mkdir(parents=True, exist_ok=True)
         agent_config = self.config.agents.get(name)
         process = AgentProcess(
-            home_dir=self.home_dir,
             workspace=workspace,
             mcp_configs=self._mcp_configs_for(name),
             agent_name=name,

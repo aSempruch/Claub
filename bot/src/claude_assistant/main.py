@@ -21,7 +21,7 @@ log = logging.getLogger("claude_assistant")
 logging.getLogger("claude_assistant.claude_process").setLevel(logging.DEBUG)
 
 
-def _resolve_paths() -> tuple[Path, Path, Path, Path, Path, Path, Path]:
+def _resolve_paths() -> tuple[Path, Path, Path, Path, Path, Path]:
     """Resolve paths relative to CLAUB_HOME (default: ~/.claub)."""
     claub_home = Path(os.environ.get(
         "CLAUB_HOME",
@@ -29,7 +29,6 @@ def _resolve_paths() -> tuple[Path, Path, Path, Path, Path, Path, Path]:
     ))
     return (
         claub_home / "config" / "agents.yaml",
-        claub_home / "home",
         claub_home / "workspaces",
         claub_home / "data" / "sessions.json",
         claub_home / "config" / "mcp.json",
@@ -48,7 +47,7 @@ def main() -> None:
         log.error("DISCORD_BOT_TOKEN environment variable is required")
         sys.exit(1)
 
-    config_path, home_dir, workspaces_dir, sessions_path, mcp_config, agents_dir, schedules_path = _resolve_paths()
+    config_path, workspaces_dir, sessions_path, mcp_config, agents_dir, schedules_path = _resolve_paths()
 
     if not config_path.exists():
         log.error("Config not found: %s", config_path)
@@ -62,7 +61,6 @@ def main() -> None:
 
     bot = AssistantBot(
         config=config,
-        home_dir=home_dir,
         workspaces_dir=workspaces_dir,
         session_store=sessions,
         schedule_store=schedules,
