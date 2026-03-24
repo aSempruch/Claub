@@ -14,6 +14,6 @@ if [ -f "/claub/config/CLAUDE.md" ]; then
 fi
 
 # Ensure data directories exist
-mkdir -p /claub/data/workspaces
+mkdir -p /claub/workspaces
 
 exec uv run claude-assistant

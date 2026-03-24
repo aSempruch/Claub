@@ -7,9 +7,15 @@ services:
       - claude-home:/root/.claude
       - ./instance/config:/claub/config
       - ./instance/data:/claub/data
+      - ./instance/workspaces:/claub/workspaces
       - ./instance/mcps:/claub/mcps
     init: true
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "claude-assistant"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
 volumes:
   claude-home:

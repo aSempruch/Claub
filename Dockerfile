@@ -21,7 +21,7 @@ COPY bot/ .
 
 # Container layout
 ENV CLAUB_HOME=/claub
-RUN mkdir -p /claub/config /claub/data /claub/data/workspaces /claub/mcps
+RUN mkdir -p /claub/config /claub/data /claub/workspaces /claub/mcps
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
