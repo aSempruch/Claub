@@ -8,37 +8,79 @@ from collections.abc import Awaitable, Callable
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from claude_assistant.config import AssistantConfig
+from claude_assistant.schedule_store import ScheduleStore
 
 log = logging.getLogger(__name__)
 
-# callback signature: (agent_name, prompt) -> None
 ScheduleCallback = Callable[[str, str], Awaitable[None]]
 
 
 class Scheduler:
     def __init__(
-        self, config: AssistantConfig, callback: ScheduleCallback
+        self,
+        store: ScheduleStore,
+        callback: ScheduleCallback,
+        valid_agents: set[str] | None = None,
     ) -> None:
         self._scheduler = AsyncIOScheduler()
         self._callback = callback
+        self._store = store
 
-        for agent_name, agent_config in config.agents.items():
-            for i, entry in enumerate(agent_config.schedules):
-                for j, cron in enumerate(entry.crons):
-                    self._scheduler.add_job(
-                        self._run,
-                        trigger=CronTrigger.from_crontab(cron),
-                        args=[agent_name, entry.prompt],
-                        id=f"{agent_name}_schedule_{i}_{j}",
-                        name=f"{agent_name}: {entry.prompt[:50]}",
-                    )
+        for agent_name, entries in store.all().items():
+            if valid_agents is not None and agent_name not in valid_agents:
+                log.warning("Skipping orphaned schedules for agent %s", agent_name)
+                continue
+            for entry in entries:
+                self._add_apscheduler_job(agent_name, entry)
+
+    def _add_apscheduler_job(self, agent_name: str, entry: dict) -> None:
+        job_id = f"{agent_name}_{entry['id']}"
+        if entry.get("one_shot"):
+            run_fn = self._run_one_shot
+            args = [agent_name, entry["id"], entry["prompt"]]
+        else:
+            run_fn = self._run
+            args = [agent_name, entry["prompt"]]
+        self._scheduler.add_job(
+            run_fn,
+            trigger=CronTrigger.from_crontab(entry["cron"]),
+            args=args,
+            id=job_id,
+            name=f"{agent_name}: {entry['prompt'][:50]}",
+        )
+
+    def add_job(
+        self, agent_name: str, entry_id: str, cron: str, prompt: str, *, one_shot: bool
+    ) -> None:
+        entry = {"id": entry_id, "cron": cron, "prompt": prompt, "one_shot": one_shot}
+        self._add_apscheduler_job(agent_name, entry)
+
+    def remove_job(self, agent_name: str, entry_id: str) -> None:
+        job_id = f"{agent_name}_{entry_id}"
+        try:
+            self._scheduler.remove_job(job_id)
+        except Exception:
+            log.debug("Job %s not found in scheduler", job_id)
 
     async def _run(self, agent_name: str, prompt: str) -> None:
-        jitter = random.uniform(0, 300)  # 0–5 minutes
+        jitter = random.uniform(0, 300)
         log.info("Scheduled task for %s — delaying %.0fs", agent_name, jitter)
         await asyncio.sleep(jitter)
         log.info("Scheduled task firing for %s", agent_name)
+        prefixed = f"[scheduled] {prompt}"
+        await self._callback(agent_name, prefixed)
+
+    async def _run_one_shot(self, agent_name: str, entry_id: str, prompt: str) -> None:
+        async with self._store.lock:
+            self._store.delete(agent_name, entry_id)
+            job_id = f"{agent_name}_{entry_id}"
+            try:
+                self._scheduler.remove_job(job_id)
+            except Exception:
+                pass
+        log.info("One-shot schedule %s for %s — firing and removing", entry_id, agent_name)
+        jitter = random.uniform(0, 300)
+        await asyncio.sleep(jitter)
         prefixed = f"[scheduled] {prompt}"
         await self._callback(agent_name, prefixed)
 

@@ -1,50 +1,63 @@
 import pytest
-from unittest.mock import AsyncMock, MagicMock
-from claude_assistant.config import AssistantConfig, AgentConfig, ScheduleEntry
+from unittest.mock import AsyncMock
+from claude_assistant.schedule_store import ScheduleStore
 from claude_assistant.scheduler import Scheduler
 
 
-def _config_with_schedule() -> AssistantConfig:
-    return AssistantConfig(
-        agents={
-            "main": AgentConfig(
-                channel_id="100",
-                schedules=[
-                    ScheduleEntry(crons=["0 8 * * *"], prompt="morning review"),
-                ],
-            ),
-            "journalist": AgentConfig(
-                channel_id="200",
-                schedules=[
-                    ScheduleEntry(crons=["0 9 * * *"], prompt="check news"),
-                    ScheduleEntry(crons=["0 17 * * *"], prompt="evening summary"),
-                ],
-            ),
-        },
-    )
+@pytest.fixture
+def store(tmp_path) -> ScheduleStore:
+    return ScheduleStore(tmp_path / "schedules.json")
 
 
-def test_scheduler_registers_jobs() -> None:
-    callback = AsyncMock()
-    scheduler = Scheduler(_config_with_schedule(), callback)
-    jobs = scheduler.get_jobs()
-    assert len(jobs) == 3  # 1 main + 2 journalist
+@pytest.fixture
+def callback() -> AsyncMock:
+    return AsyncMock()
 
 
-def test_scheduler_registers_main_schedule() -> None:
-    callback = AsyncMock()
-    scheduler = Scheduler(_config_with_schedule(), callback)
-    job_names = [j.name for j in scheduler.get_jobs()]
-    assert any("main" in name for name in job_names)
+def test_load_from_store(store: ScheduleStore, callback: AsyncMock) -> None:
+    store.create("main", cron="0 9 * * *", prompt="morning", one_shot=False)
+    store.create("journalist", cron="0 17 * * *", prompt="evening", one_shot=False)
+    scheduler = Scheduler(store, callback)
+    assert len(scheduler.get_jobs()) == 2
 
 
-def test_scheduler_no_schedules() -> None:
-    config = AssistantConfig(
-        agents={
-            "main": AgentConfig(channel_id="100"),
-            "journalist": AgentConfig(channel_id="200"),
-        },
-    )
-    callback = AsyncMock()
-    scheduler = Scheduler(config, callback)
+def test_load_empty_store(store: ScheduleStore, callback: AsyncMock) -> None:
+    scheduler = Scheduler(store, callback)
     assert len(scheduler.get_jobs()) == 0
+
+
+def test_add_job(store: ScheduleStore, callback: AsyncMock) -> None:
+    scheduler = Scheduler(store, callback)
+    scheduler.add_job("main", "abc123", "0 9 * * *", "test prompt", one_shot=False)
+    assert len(scheduler.get_jobs()) == 1
+
+
+def test_remove_job(store: ScheduleStore, callback: AsyncMock) -> None:
+    store.create("main", cron="0 9 * * *", prompt="test", one_shot=False)
+    scheduler = Scheduler(store, callback)
+    entry_id = store.list("main")[0]["id"]
+    scheduler.remove_job("main", entry_id)
+    assert len(scheduler.get_jobs()) == 0
+
+
+def test_remove_nonexistent_job(store: ScheduleStore, callback: AsyncMock) -> None:
+    scheduler = Scheduler(store, callback)
+    scheduler.remove_job("main", "nonexistent")
+
+
+def test_filter_orphaned_agents(store: ScheduleStore, callback: AsyncMock) -> None:
+    store.create("deleted_agent", cron="0 9 * * *", prompt="orphan", one_shot=False)
+    scheduler = Scheduler(store, callback, valid_agents={"main"})
+    assert len(scheduler.get_jobs()) == 0
+
+
+@pytest.mark.asyncio
+async def test_one_shot_fires_and_deletes(store: ScheduleStore, callback: AsyncMock) -> None:
+    entry = store.create("main", cron="0 9 * * *", prompt="one-time", one_shot=True)
+    scheduler = Scheduler(store, callback)
+    await scheduler._run_one_shot("main", entry["id"], "one-time")
+    callback.assert_called_once()
+    call_args = callback.call_args[0]
+    assert call_args[0] == "main"
+    assert "[scheduled]" in call_args[1]
+    assert store.list("main") == []
