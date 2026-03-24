@@ -1,0 +1,15 @@
+services:
+  claub:
+    build: .
+    environment:
+      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
+    volumes:
+      - claude-home:/root/.claude
+      - ./instance/config:/claub/config
+      - ./instance/data:/claub/data
+      - ./instance/mcps:/claub/mcps
+    init: true
+    restart: unless-stopped
+
+volumes:
+  claude-home:

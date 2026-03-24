@@ -1,0 +1,13 @@
+.git/
+scripts/
+docs/
+__pycache__/
+*.pyc
+*.egg-info
+.venv/
+bot/.venv/
+.envrc
+bot/.envrc
+instance/
+*.md
+!bot/**/*.md
