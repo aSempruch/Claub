@@ -119,7 +119,7 @@ def create_mcp_server(store: ScheduleStore, scheduler: Scheduler) -> fastmcp.Fas
     async def create_schedule(
         cron: str,
         prompt: str,
-        one_shot: bool = False,
+        one_shot: bool,
         request: Request = fastmcp.server.dependencies.CurrentRequest(),  # type: ignore[assignment]
     ) -> str:
         """Create a new schedule for the requesting agent.
