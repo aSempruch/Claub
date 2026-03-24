@@ -90,3 +90,19 @@ class TestAgentProcess:
         proc = AgentProcess(home_dir=home_dir, workspace=workspace)
         event = {"type": "assistant", "message": {}}
         assert not proc._is_result_event(event)
+
+    @pytest.mark.asyncio
+    async def test_env_includes_agent_name(
+        self, home_dir: Path, workspace: Path
+    ) -> None:
+        proc = AgentProcess(home_dir=home_dir, workspace=workspace, agent_name="journalist")
+        env = proc._env()
+        assert env["CLAUB_AGENT_NAME"] == "journalist"
+
+    @pytest.mark.asyncio
+    async def test_env_no_agent_name(
+        self, home_dir: Path, workspace: Path
+    ) -> None:
+        proc = AgentProcess(home_dir=home_dir, workspace=workspace)
+        env = proc._env()
+        assert "CLAUB_AGENT_NAME" not in env

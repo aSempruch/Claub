@@ -102,6 +102,8 @@ class AgentProcess:
     def _env(self) -> dict[str, str]:
         env = os.environ.copy()
         env["HOME"] = str(self.home_dir)
+        if self.agent_name:
+            env["CLAUB_AGENT_NAME"] = self.agent_name
         return env
 
     async def start(self, session_id: str | None = None) -> None:
