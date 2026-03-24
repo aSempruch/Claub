@@ -45,8 +45,12 @@ AssistantBot (discord.py)
     │   └─ Communicates via stdin/stdout JSON events
     │   └─ Started lazily on first message, supervised — auto-restarts on crash
     │
-    └─ Scheduler (APScheduler)
-        └─ Fires any agent on cron schedules (including main)
+    ├─ Scheduler (APScheduler)
+    │   └─ Fires any agent on cron schedules (including main)
+    │   └─ Loads from ~/.claub/data/schedules.json
+    │
+    └─ MCP Server (FastMCP, localhost:9400)
+        └─ Agents manage their own schedules via list/create/delete tools
 ```
 
 All Claude processes run with an **isolated HOME** (`~/.claub/home/`) — separate from the user's real `~/.claude`. Credentials live in `~/.claub/home/.claude/.credentials.json` (its own file, not symlinked).
@@ -65,12 +69,15 @@ bot/                              # Python package (discord bot)
     scheduler.py                  # APScheduler cron wrapper
     session.py                    # SessionStore — atomic JSON persistence of session IDs
     chunker.py                    # Splits long messages for Discord's 2000-char limit
+    mcp_server.py                 # FastMCP HTTP server — schedule management tools for agents
+    schedule_store.py             # ScheduleStore — atomic JSON persistence of schedules
   tests/                          # pytest + pytest-asyncio
 
 scripts/                          # Service management
   run.sh                          # Wrapper for launchd — loads env, runs bot
   ctl.sh                          # Service control (install/start/stop/restart/logs/status)
   com.asempruch.claub.plist       # launchd plist template (paths filled at install)
+  migrate_schedules.py            # One-time migration of schedules from agents.yaml to schedules.json
 
 ~/.claub/                         # User instance (not in repo)
   config/                         # All user-editable configuration
@@ -93,6 +100,7 @@ scripts/                          # Service management
       server.py
   workspaces/                     # Runtime scratch dirs per agent (auto-created)
   data/                           # sessions.json — session ID persistence
+                                  # schedules.json — dynamic schedule persistence
 ```
 
 ## Configuration
@@ -105,19 +113,39 @@ All configuration lives in `~/.claub/config/`. The `~/.claub/home/.claude/` dire
 agents:
   main:
     channel_id: "123456789"       # Required — every agent needs a channel
-    schedule:                     # Optional — cron triggers work for any agent
-      - cron: "0 8 * * *"
-        prompt: "Review my open action items"
+    display_name: "Main"          # Optional — display name for the agent
+    avatar_url: "https://..."     # Optional — avatar URL for the agent
+    allowed_tools_additional: []  # Optional — additional tools beyond defaults
   journalist:
     channel_id: "987654321"
-    schedule:
-      - cron: "0 9 * * *"
-        prompt: "Check the latest tech news"
 ```
 
-An `agents.main` entry is required.
+An `agents.main` entry is required. Schedules are managed dynamically via the MCP server (see Schedule Management below) — not in `agents.yaml`.
 
-> **Note:** Do not add `[scheduled]` to cron prompts in `agents.yaml` — the bot prefixes it automatically at runtime (see `scheduler.py`).
+### Schedule Management
+
+Schedules are managed dynamically at runtime via an embedded MCP server. Agents can create, list, and delete their own cron schedules using MCP tools (`mcp__schedules__list_schedules`, `mcp__schedules__create_schedule`, `mcp__schedules__delete_schedule`).
+
+Schedule data is persisted to `~/.claub/data/schedules.json` (machine-managed, not hand-edited):
+
+```json
+{
+  "agent_name": [
+    {
+      "id": "a1b2c3",
+      "cron": "0 9 * * *",
+      "prompt": "Do the thing",
+      "one_shot": false
+    }
+  ]
+}
+```
+
+- **`one_shot`**: If true, the schedule fires once and is then automatically deleted.
+- The bot's APScheduler syncs from this file on startup and immediately on mutations.
+- The MCP server runs on `127.0.0.1:9400` (configurable via `CLAUB_MCP_PORT` env var).
+- Agent name is passed via the `X-Agent-Name` HTTP header, resolved from the `${CLAUB_AGENT_NAME}` env var set in each agent's process.
+- Schedule changes trigger a notification in the agent's Discord channel.
 
 ### Agent Context — The Three-Level Split
 
@@ -174,7 +202,7 @@ Tool allow-list and OS-level sandbox for all agents:
 ```json
 {
   "permissions": {
-    "allow": ["mcp__playwright__*", "WebFetch", "WebSearch"]
+    "allow": ["mcp__playwright__*", "mcp__schedules__*", "WebFetch", "WebSearch"]
   },
   "sandbox": {
     "enabled": true,
@@ -309,6 +337,7 @@ If auth fails, re-authenticate: `HOME=~/.claub/home claude` and follow the login
 - **acceptEdits permission mode**: All processes run with `--permission-mode acceptEdits`
 - **Config symlinks**: All user-editable config lives in `~/.claub/config/`. `~/.claub/home/.claude/` symlinks to it so Claude Code finds settings in expected locations.
 - **Separated instance from source**: Bot code lives in the repo; user config and runtime state live in `~/.claub/` (overridable via `CLAUB_HOME` env var).
+- **Embedded MCP server for schedules**: FastMCP HTTP server runs inside the bot process on localhost. Agents manage their own cron schedules via MCP tools. Changes take effect immediately — no file polling or restart needed. One-shot schedules are deleted from persistence before execution to prevent duplicate firing on crash recovery.
 
 ### Agent Memory System
 
@@ -325,7 +354,7 @@ Memory guidelines live within the broader agent configuration system (see "Agent
 
 ### Dependencies
 
-Core: `discord.py`, `apscheduler`, `pyyaml`, `python-dotenv`
+Core: `discord.py`, `apscheduler`, `pyyaml`, `python-dotenv`, `fastmcp`, `uvicorn`
 Dev: `pytest`, `pytest-asyncio`
 Build: `hatchling`
 
