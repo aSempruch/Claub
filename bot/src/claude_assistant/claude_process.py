@@ -41,14 +41,12 @@ class AgentProcess:
 
     def __init__(
         self,
-        home_dir: Path,
         workspace: Path,
         mcp_configs: list[Path] | None = None,
         agent_name: str | None = None,
         allowed_tools_additional: list[str] | None = None,
         model: str | None = None,
     ) -> None:
-        self.home_dir = home_dir
         self.workspace = workspace
         self.mcp_configs = mcp_configs or []
         self.agent_name = agent_name
@@ -101,7 +99,6 @@ class AgentProcess:
 
     def _env(self) -> dict[str, str]:
         env = os.environ.copy()
-        env["HOME"] = str(self.home_dir)
         if self.agent_name:
             env["CLAUB_AGENT_NAME"] = self.agent_name
         return env
