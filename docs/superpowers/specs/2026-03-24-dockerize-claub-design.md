@@ -36,7 +36,7 @@ Credentials persist in a named Docker volume mapped to `~/.claude/` (e.g., `clau
 
 1. Install Node.js (Claude CLI is npm-based) and `uv` package manager
 2. Install Claude CLI globally via npm (`@anthropic-ai/claude-code`)
-3. Copy `bot/` source and `uv.lock` into `/app`
+3. Copy `bot/` source and `uv.lock` into `/app`, set `WORKDIR /app/bot`
 4. Install Python dependencies with `uv sync`
 
 **Expected image size:** ~500MB+ due to Node.js + Claude CLI + Python + uv. Acceptable for a single-purpose container.
@@ -63,7 +63,7 @@ No symlinks — plain copies. Config changes require container restart, which is
 
 ### .dockerignore
 
-Exclude: `.git/`, `scripts/`, `tests/`, `__pycache__/`, `*.pyc`, `.envrc`, `docs/`, `.gitignore`. Include `uv.lock` for reproducible builds.
+Exclude: `.git/`, `scripts/`, `tests/`, `__pycache__/`, `*.pyc`, `.envrc`, `docs/`, `.gitignore`, `instance/`, `*.egg-info`, `.venv/`. Include `uv.lock` for reproducible builds.
 
 ## docker-compose.yml
 
@@ -79,6 +79,8 @@ services:
       - ./instance/data:/claub/data
       - ./instance/workspaces:/claub/workspaces
       - ./instance/mcps:/claub/mcps
+    init: true
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "pgrep", "-f", "claude-assistant"]
       interval: 30s
@@ -106,7 +108,7 @@ Remove `home_dir` from the paths passed to `AssistantBot`.
 
 ### claude_process.py
 
-- Remove the `HOME` env var override entirely. Claude CLI uses the real home.
+- Remove the `HOME` line from `_env()`. The `_env()` method itself is preserved — it still sets `CLAUB_AGENT_NAME` and other env vars. Claude CLI uses the real home.
 - Remove `home_dir` parameter from `AgentProcess`.
 - MCP config paths still resolve from `CLAUB_HOME`.
 
@@ -116,7 +118,7 @@ Remove `home_dir` from the paths passed to `AssistantBot`.
 
 ## Sandbox Configuration
 
-The current `settings.json` configures macOS Seatbelt sandboxing which does not exist on Linux. Claude CLI gracefully ignores sandbox config on non-macOS platforms, so the same `settings.json` can be used. No Docker-specific settings file needed.
+The current `settings.json` configures macOS Seatbelt sandboxing which does not exist on Linux. Verify during implementation that Claude CLI ignores sandbox config on Linux without errors. If it does error, the entrypoint should strip the `sandbox` key before copying `settings.json` into `~/.claude/`.
 
 ## MCP Server Networking
 
