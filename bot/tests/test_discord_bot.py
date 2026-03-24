@@ -3,7 +3,7 @@ import pytest
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 from claude_assistant.discord_bot import AssistantBot
-from claude_assistant.config import AssistantConfig, AgentConfig, ScheduleEntry
+from claude_assistant.config import AssistantConfig, AgentConfig
 
 
 @pytest.fixture
@@ -11,10 +11,7 @@ def config() -> AssistantConfig:
     return AssistantConfig(
         agents={
             "main": AgentConfig(channel_id="100"),
-            "journalist": AgentConfig(
-                channel_id="200",
-                schedules=[ScheduleEntry(crons=["0 9 * * *"], prompt="news")],
-            ),
+            "journalist": AgentConfig(channel_id="200"),
         },
     )
 

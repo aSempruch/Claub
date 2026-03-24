@@ -23,35 +23,13 @@ def test_load_config_with_agents(tmp_path: Path) -> None:
         '    channel_id: "123"\n'
         "  journalist:\n"
         '    channel_id: "456"\n'
-        "    schedule:\n"
-        "      - cron:\n"
-        '          - "0 9 * * *"\n'
-        '        prompt: "check news"\n'
+        '    display_name: "The Journalist"\n'
     )
     config = load_config(cfg_file)
     assert "main" in config.agents
     assert "journalist" in config.agents
-    agent = config.agents["journalist"]
-    assert agent.channel_id == "456"
-    assert len(agent.schedules) == 1
-    assert agent.schedules[0].crons == ["0 9 * * *"]
-    assert agent.schedules[0].prompt == "check news"
-
-
-def test_load_config_main_with_schedule(tmp_path: Path) -> None:
-    cfg_file = tmp_path / "agents.yaml"
-    cfg_file.write_text(
-        "agents:\n"
-        "  main:\n"
-        '    channel_id: "123"\n'
-        "    schedule:\n"
-        "      - cron:\n"
-        '          - "0 8 * * *"\n'
-        '        prompt: "morning review"\n'
-    )
-    config = load_config(cfg_file)
-    assert len(config.agents["main"].schedules) == 1
-    assert config.agents["main"].schedules[0].prompt == "morning review"
+    assert config.agents["journalist"].channel_id == "456"
+    assert config.agents["journalist"].display_name == "The Journalist"
 
 
 def test_load_config_missing_main(tmp_path: Path) -> None:
@@ -72,7 +50,7 @@ def test_load_config_agent_missing_channel(tmp_path: Path) -> None:
         "  main:\n"
         '    channel_id: "123"\n'
         "  journalist:\n"
-        "    schedule: []\n"
+        "    display_name: nope\n"
     )
     with pytest.raises(ValueError, match="channel_id"):
         load_config(cfg_file)

@@ -7,15 +7,8 @@ import yaml
 
 
 @dataclass(frozen=True)
-class ScheduleEntry:
-    crons: list[str]
-    prompt: str
-
-
-@dataclass(frozen=True)
 class AgentConfig:
     channel_id: str
-    schedules: list[ScheduleEntry] = field(default_factory=list)
     display_name: str | None = None
     avatar_url: str | None = None
     allowed_tools_additional: list[str] = field(default_factory=list)
@@ -37,13 +30,8 @@ def load_config(path: Path) -> AssistantConfig:
         channel_id = (agent_raw or {}).get("channel_id")
         if not channel_id:
             raise ValueError(f"agents.{name}.channel_id is required")
-        schedules = [
-            ScheduleEntry(crons=s["cron"], prompt=s["prompt"])
-            for s in (agent_raw.get("schedule") or [])
-        ]
         agents[name] = AgentConfig(
             channel_id=channel_id,
-            schedules=schedules,
             display_name=(agent_raw or {}).get("display_name"),
             avatar_url=(agent_raw or {}).get("avatar_url"),
             allowed_tools_additional=(agent_raw or {}).get("allowed_tools_additional") or [],
