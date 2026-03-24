@@ -332,7 +332,8 @@ If auth fails, re-authenticate: `HOME=~/.claub/home claude` and follow the login
 - **Lazy startup**: Agent processes start on first message or scheduled trigger, not eagerly at boot. Supervisor restarts dead processes.
 - **Stream lock inside AgentProcess**: Internal asyncio lock serializes send/receive on the stream-json pipe. No bot-level locks needed.
 - **Lifecycle lock**: Separate lock in AgentProcess protects start/stop/restart transitions from racing with the supervisor.
-- **Idle reaper**: Background task kills agent processes after 1 hour of inactivity. Prevents stale processes from holding expiring OAuth tokens, which caused auth races when multiple long-lived processes shared the same credentials file. A `_reaped` set prevents the supervisor from immediately restarting intentionally killed processes. If the idle reaper alone isn't sufficient, a global agent lock is stashed (`git stash list` — `agent-lock: serialize API calls via asyncio.Lock`) that serializes all API calls so only one agent talks to Claude at a time.
+- **Idle reaper**: Background task kills agent processes after 1 hour of inactivity. Prevents stale processes from holding expiring OAuth tokens, which caused auth races when multiple long-lived processes shared the same credentials file. A `_reaped` set prevents the supervisor from immediately restarting intentionally killed processes.
+- **Global agent lock**: `_agent_lock` in `AssistantBot` serializes all agent API calls so only one agent talks to Claude at a time, preventing credential/token races.
 - **Isolated HOME**: All Claude processes use `~/.claub/home/` — own credentials file, settings/agents/permissions self-contained
 - **acceptEdits permission mode**: All processes run with `--permission-mode acceptEdits`
 - **Config symlinks**: All user-editable config lives in `~/.claub/config/`. `~/.claub/home/.claude/` symlinks to it so Claude Code finds settings in expected locations.
