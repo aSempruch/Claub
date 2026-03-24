@@ -13,11 +13,11 @@ ENV PATH="/root/.local/bin:$PATH"
 # Install Claude CLI
 RUN npm install -g @anthropic-ai/claude-code
 
-# Copy bot source and install Python deps
+# Install Python deps (deps layer cached separately from source)
 WORKDIR /app/bot
 COPY bot/pyproject.toml bot/uv.lock ./
+COPY bot/src/ ./src/
 RUN uv sync --no-dev --frozen
-COPY bot/ .
 
 # Container layout
 ENV CLAUB_HOME=/claub
