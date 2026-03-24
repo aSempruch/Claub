@@ -11,7 +11,9 @@ import discord
 from claude_assistant.chunker import chunk_message
 from claude_assistant.claude_process import AgentProcess, AuthenticationError
 from claude_assistant.config import AssistantConfig
+from claude_assistant.mcp_server import create_mcp_server
 from claude_assistant.router import Router
+from claude_assistant.schedule_store import ScheduleStore
 from claude_assistant.scheduler import Scheduler
 from claude_assistant.session import SessionStore
 
@@ -25,21 +27,26 @@ class AssistantBot:
         home_dir: Path,
         workspaces_dir: Path,
         session_store: SessionStore,
+        schedule_store: ScheduleStore,
         mcp_config: Path | None = None,
         agents_dir: Path | None = None,
+        mcp_port: int = 9400,
     ) -> None:
         self.config = config
         self.home_dir = home_dir
         self.workspaces_dir = workspaces_dir
         self.sessions = session_store
+        self.schedule_store = schedule_store
         self.mcp_config = mcp_config
         self.agents_dir = agents_dir
+        self.mcp_port = mcp_port
         self.router = Router(config)
 
         self._processes: dict[str, AgentProcess] = {}
         self._webhooks: dict[int, discord.Webhook] = {}  # channel_id -> webhook
         self._supervisor_task: asyncio.Task | None = None
         self._idle_reaper_task: asyncio.Task | None = None
+        self._mcp_server_task: asyncio.Task | None = None
         self._shutting_down = False
         self._last_activity: dict[str, float] = {}  # agent name -> timestamp
         self._reaped: set[str] = set()  # agents intentionally killed by idle reaper
@@ -56,8 +63,9 @@ class AssistantBot:
             log.info("Discord connected as %s", self._client.user)
             self._supervisor_task = asyncio.create_task(self._supervise_all())
             self._idle_reaper_task = asyncio.create_task(self._reap_idle_processes())
-            self._scheduler = Scheduler(self.config, self._handle_scheduled)
+            self._scheduler = Scheduler(self.schedule_store, self._handle_scheduled, valid_agents=set(self.config.agents.keys()))
             self._scheduler.start()
+            self._mcp_server_task = asyncio.create_task(self._start_mcp_server())
 
         @self._client.event
         async def on_message(message: discord.Message) -> None:
@@ -146,6 +154,16 @@ class AssistantBot:
         except asyncio.CancelledError:
             log.info("Idle reaper cancelled")
             return
+
+    async def _start_mcp_server(self) -> None:
+        import uvicorn
+
+        mcp = create_mcp_server(self.schedule_store, self._scheduler)
+        app = mcp.http_app()
+        config = uvicorn.Config(app, host="127.0.0.1", port=self.mcp_port, log_level="warning")
+        self._uvicorn_server = uvicorn.Server(config)
+        log.info("Starting MCP server on 127.0.0.1:%d", self.mcp_port)
+        await self._uvicorn_server.serve()
 
     # --- Message handling ---
 
@@ -360,6 +378,10 @@ class AssistantBot:
             self._supervisor_task.cancel()
         if self._idle_reaper_task:
             self._idle_reaper_task.cancel()
+        if hasattr(self, "_uvicorn_server"):
+            self._uvicorn_server.should_exit = True
+        if self._mcp_server_task:
+            self._mcp_server_task.cancel()
         if hasattr(self, "_scheduler"):
             self._scheduler.stop()
         # Stop all agent processes in parallel
