@@ -175,8 +175,8 @@ MCP servers give agents access to external tools (APIs, browsers, etc.) without 
 {
   "mcpServers": {
     "playwright": {
-      "command": "npx",
-      "args": ["@playwright/mcp@latest", "--browser", "chrome"]
+      "type": "http",
+      "url": "http://host.docker.internal:3846/mcp"
     }
   }
 }
@@ -184,7 +184,22 @@ MCP servers give agents access to external tools (APIs, browsers, etc.) without 
 
 **Per-agent** (`/claub/config/agents/{name}.mcp.json`) — additional MCPs for a specific agent only. Both files are passed via `--mcp-config` when the agent runs.
 
+#### Playwright MCP (Host-Side)
+
+Playwright runs on the **host** as a launchd service (not inside the container — it needs a browser). The container connects to it via `host.docker.internal`:
+
+```bash
+scripts/playwright-mcp.sh install   # Install launchd plist
+scripts/playwright-mcp.sh start     # Start the service
+scripts/playwright-mcp.sh status    # Check status
+scripts/playwright-mcp.sh logs      # View logs
+```
+
+The service runs `npx @playwright/mcp@latest --port 3846 --host 127.0.0.1 --allowed-hosts host.docker.internal:3846` and auto-starts on reboot.
+
 #### Custom MCP Servers
+
+Custom MCP servers live in `/claub/mcps/` (bind-mounted from host). The entrypoint automatically runs `uv sync` for any subdirectory containing a `pyproject.toml` on every container start, so Python-based MCPs are always ready.
 
 Use the `/build-mcp-server` skill for the full guide on building, wiring, and testing custom MCP servers for agents.
 
