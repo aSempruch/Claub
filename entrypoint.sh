@@ -16,4 +16,11 @@ fi
 # Ensure data directories exist
 mkdir -p /claub/workspaces
 
+# Install dependencies for mounted MCP servers
+for dir in /claub/mcps/*/; do
+    if [ -f "$dir/pyproject.toml" ]; then
+        uv sync --directory "$dir" 2>&1 | tail -1
+    fi
+done
+
 exec uv run claude-assistant
