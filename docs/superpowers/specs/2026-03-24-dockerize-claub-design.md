@@ -53,7 +53,7 @@ Runs before the bot on every container start:
 
 1. Copy config files from `/claub/config/` into `~/.claude/`:
    - `agents/` directory (recursive copy)
-   - `settings.json`
+   - `settings.json` (strip the `sandbox` key — macOS-only, irrelevant in Docker)
    - `CLAUDE.md`
    - Skip `.credentials.json` and other existing files in the volume (preserve credentials)
 2. Ensure `/claub/data/`, `/claub/workspaces/` exist (create if missing)
@@ -118,7 +118,7 @@ Remove `home_dir` from the paths passed to `AssistantBot`.
 
 ## Sandbox Configuration
 
-The current `settings.json` configures macOS Seatbelt sandboxing which does not exist on Linux. Verify during implementation that Claude CLI ignores sandbox config on Linux without errors. If it does error, the entrypoint should strip the `sandbox` key before copying `settings.json` into `~/.claude/`.
+The `sandbox` key in `settings.json` configures macOS Seatbelt — irrelevant in Linux containers. The entrypoint strips it when copying `settings.json` into `~/.claude/`.
 
 ## MCP Server Networking
 
