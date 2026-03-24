@@ -6,7 +6,7 @@
 
 ## Goal
 
-Containerize the Claub Discord bot so it runs without the `~/.claub/home/` HOME override hack. In Docker, Claude CLI uses its native `~/.claude/` path directly. The container is single-purpose — its only job is running Claub.
+Containerize the Claub Discord bot so it runs without the `~/.claub/home/` HOME override hack. In Docker, Claude CLI uses its native `~/.claude/` path directly. The container is single-purpose — its only job is running Claub. Docker is the primary deployment target; bare-metal is not a supported path.
 
 ## Container Layout
 
@@ -44,7 +44,6 @@ Credentials persist in a named Docker volume mapped to `~/.claude/` (e.g., `clau
 **Default env vars:**
 
 - `CLAUB_HOME=/claub`
-- `CLAUB_SKIP_HOME_OVERRIDE=1`
 
 **Entrypoint:** `entrypoint.sh` (see below)
 
@@ -96,30 +95,28 @@ Or single mount variant: `./instance:/claub` (replaces the four bind mounts).
 
 ### main.py
 
-Update path resolution. Currently derives paths as:
+Update path resolution:
 
 - `{CLAUB_HOME}/config/` (unchanged)
-- `{CLAUB_HOME}/home/` (remove — no longer used in Docker)
-- `{CLAUB_HOME}/workspaces/` (unchanged — stays as sibling, not under data/)
+- `{CLAUB_HOME}/home/` — remove entirely, no longer exists
+- `{CLAUB_HOME}/workspaces/` (unchanged)
 - `{CLAUB_HOME}/data/` (unchanged)
+
+Remove `home_dir` from the paths passed to `AssistantBot`.
 
 ### claude_process.py
 
-- When `CLAUB_SKIP_HOME_OVERRIDE` env var is set, skip setting `HOME` in the spawned process environment. Claude CLI uses the container's real home natively.
-- When the env var is absent (non-Docker), existing HOME override behavior is preserved.
+- Remove the `HOME` env var override entirely. Claude CLI uses the real home.
+- Remove `home_dir` parameter from `AgentProcess`.
 - MCP config paths still resolve from `CLAUB_HOME`.
 
 ### discord_bot.py
 
-- Update `home_dir` handling — pass it conditionally based on `CLAUB_SKIP_HOME_OVERRIDE`. When set, `home_dir` is not passed to `AgentProcess` (or is ignored inside it).
-
-### Backward Compatibility (Non-Docker)
-
-The `~/.claub/home/` HOME override path continues to work for non-Docker usage. The `CLAUB_SKIP_HOME_OVERRIDE` env var is the only toggle — set by the Docker entrypoint, absent in launchd/bare-metal deployments. No changes to the non-Docker path resolution, workspace locations, or launch scripts.
+- Remove `home_dir` from constructor and from `AgentProcess` instantiation.
 
 ## Sandbox Configuration
 
-The current `settings.json` configures macOS Seatbelt sandboxing which does not exist on Linux. Claude CLI gracefully ignores sandbox config on non-macOS platforms, so the same `settings.json` can be used in both environments. No Docker-specific settings file needed.
+The current `settings.json` configures macOS Seatbelt sandboxing which does not exist on Linux. Claude CLI gracefully ignores sandbox config on non-macOS platforms, so the same `settings.json` can be used. No Docker-specific settings file needed.
 
 ## MCP Server Networking
 
