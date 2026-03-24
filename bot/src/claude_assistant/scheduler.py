@@ -12,6 +12,8 @@ from claude_assistant.schedule_store import ScheduleStore
 
 log = logging.getLogger(__name__)
 
+SCHEDULE_JITTER_MAX = 900  # seconds — random delay before firing scheduled tasks
+
 ScheduleCallback = Callable[[str, str], Awaitable[None]]
 
 
@@ -63,7 +65,7 @@ class Scheduler:
             log.debug("Job %s not found in scheduler", job_id)
 
     async def _run(self, agent_name: str, prompt: str) -> None:
-        jitter = random.uniform(0, 300)
+        jitter = random.uniform(0, SCHEDULE_JITTER_MAX)
         log.info("Scheduled task for %s — delaying %.0fs", agent_name, jitter)
         await asyncio.sleep(jitter)
         log.info("Scheduled task firing for %s", agent_name)
@@ -79,7 +81,7 @@ class Scheduler:
             except Exception:
                 pass
         log.info("One-shot schedule %s for %s — firing and removing", entry_id, agent_name)
-        jitter = random.uniform(0, 300)
+        jitter = random.uniform(0, SCHEDULE_JITTER_MAX)
         await asyncio.sleep(jitter)
         prefixed = f"[scheduled] {prompt}"
         await self._callback(agent_name, prefixed)
