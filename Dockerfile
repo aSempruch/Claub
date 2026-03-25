@@ -2,7 +2,8 @@ FROM python:3.12-slim
 
 # Install Node.js (for Claude CLI) and uv
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl ca-certificates && \
+    curl ca-certificates \
+    texlive-latex-base texlive-latex-recommended texlive-fonts-recommended && \
     curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
     apt-get install -y --no-install-recommends nodejs && \
     curl -LsSf https://astral.sh/uv/install.sh | sh && \
