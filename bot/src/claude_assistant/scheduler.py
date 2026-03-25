@@ -12,9 +12,9 @@ from claude_assistant.schedule_store import ScheduleStore
 
 log = logging.getLogger(__name__)
 
-JITTER_MU = 5.5       # lognormal mean parameter (~245s median)
+JITTER_MU = 6.4       # lognormal mean parameter (~600s / 10min median)
 JITTER_SIGMA = 0.4    # lognormal spread parameter
-JITTER_MAX = 900      # hard cap in seconds
+JITTER_MAX = 1800     # hard cap in seconds (30min)
 
 
 def lognormal_jitter(mu: float = JITTER_MU, sigma: float = JITTER_SIGMA, max_delay: float = JITTER_MAX) -> float:
