@@ -99,6 +99,7 @@ class AgentProcess:
 
     def _env(self) -> dict[str, str]:
         env = os.environ.copy()
+        env.pop("DISCORD_BOT_TOKEN", None)
         if self.agent_name:
             env["CLAUB_AGENT_NAME"] = self.agent_name
         return env
