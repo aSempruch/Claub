@@ -87,6 +87,7 @@ class AssistantBot:
             agent_name=name,
             allowed_tools_additional=agent_config.allowed_tools_additional if agent_config else [],
             model=self.config.model,
+            sibling_agent_names=list(self.config.agents.keys()),
         )
         session_id = self.sessions.get(name)
         try:

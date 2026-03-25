@@ -46,12 +46,16 @@ class AgentProcess:
         agent_name: str | None = None,
         allowed_tools_additional: list[str] | None = None,
         model: str | None = None,
+        sibling_agent_names: list[str] | None = None,
     ) -> None:
         self.workspace = workspace
         self.mcp_configs = mcp_configs or []
         self.agent_name = agent_name
         self.allowed_tools_additional = allowed_tools_additional or []
         self.model = model
+        self.sibling_agent_names = [
+            n for n in (sibling_agent_names or []) if n != agent_name
+        ]
         self._process: asyncio.subprocess.Process | None = None
         self._session_id: str | None = None
         self._lock = asyncio.Lock()
@@ -72,6 +76,11 @@ class AgentProcess:
             cmd.extend(["--mcp-config"] + [str(p) for p in self.mcp_configs])
         if self.allowed_tools_additional:
             cmd.extend(["--allowedTools"] + self.allowed_tools_additional)
+        if self.sibling_agent_names:
+            cmd.extend(
+                ["--disallowedTools"]
+                + [f"Agent({n})" for n in self.sibling_agent_names]
+            )
         if self.model:
             cmd.extend(["--model", self.model])
         if session_id:
