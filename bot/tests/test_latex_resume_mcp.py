@@ -1,0 +1,128 @@
+"""Tests for latex-resume MCP server."""
+
+import json
+import os
+import subprocess
+import sys
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+# Add helpers to path (helpers.py has no module-level side effects)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "mcps", "latex-resume"))
+
+from helpers import parse_page_count, resolve_safe_path
+
+
+class TestResolveSafePath:
+    def test_valid_relative_path(self, tmp_path):
+        workspace = str(tmp_path)
+        tex_file = tmp_path / "main.tex"
+        tex_file.write_text("\\documentclass{article}")
+        assert resolve_safe_path("main.tex", workspace) == str(tex_file)
+
+    def test_subdirectory_path(self, tmp_path):
+        workspace = str(tmp_path)
+        subdir = tmp_path / "versions"
+        subdir.mkdir()
+        tex_file = subdir / "v2.tex"
+        tex_file.write_text("\\documentclass{article}")
+        assert resolve_safe_path("versions/v2.tex", workspace) == str(tex_file)
+
+    def test_rejects_non_tex_extension(self, tmp_path):
+        with pytest.raises(ValueError, match="Only .tex files"):
+            resolve_safe_path("main.pdf", str(tmp_path))
+
+    def test_rejects_path_traversal(self, tmp_path):
+        with pytest.raises(ValueError, match="escapes allowed directory"):
+            resolve_safe_path("../../etc/passwd.tex", str(tmp_path))
+
+    def test_rejects_absolute_escape(self, tmp_path):
+        with pytest.raises(ValueError, match="escapes allowed directory"):
+            resolve_safe_path("/etc/passwd.tex", str(tmp_path))
+
+    def test_rejects_missing_file(self, tmp_path):
+        with pytest.raises(ValueError, match="File not found"):
+            resolve_safe_path("nonexistent.tex", str(tmp_path))
+
+    def test_rejects_symlink_escape(self, tmp_path):
+        """A symlink inside the workspace pointing outside must be rejected."""
+        workspace = str(tmp_path)
+        outside = tmp_path.parent / "outside.tex"
+        outside.write_text("\\documentclass{article}")
+        link = tmp_path / "escape.tex"
+        link.symlink_to(outside)
+        with pytest.raises(ValueError, match="escapes allowed directory"):
+            resolve_safe_path("escape.tex", workspace)
+
+
+class TestParsePageCount:
+    def test_single_page(self):
+        assert parse_page_count("Output written on main.pdf (1 page, 52345 bytes).") == 1
+
+    def test_multiple_pages(self):
+        assert parse_page_count("Output written on main.pdf (3 pages, 152345 bytes).") == 3
+
+    def test_no_match_returns_none(self):
+        assert parse_page_count("some random output") is None
+
+
+class TestCompileLatex:
+    """Test compile_latex with mocked subprocess — covers timeout, missing PDF, page overflow."""
+
+    @pytest.fixture(autouse=True)
+    def _setup_workspace(self, tmp_path, monkeypatch):
+        self.workspace = str(tmp_path)
+        self.tex_file = tmp_path / "main.tex"
+        self.tex_file.write_text("\\documentclass{article}")
+        self.pdf_file = tmp_path / "main.pdf"
+        # Import server with patched env and workspace
+        monkeypatch.setenv("CLAUB_AGENT_NAME", "test-agent")
+        if "server" in sys.modules:
+            del sys.modules["server"]
+        import server
+        server.WORKSPACE_DIR = self.workspace
+        self.compile_latex = server.compile_latex
+
+    @patch("server.subprocess.run")
+    def test_success(self, mock_run):
+        self.pdf_file.write_text("fake pdf")
+        mock_run.return_value = MagicMock(
+            stdout="Output written on main.pdf (1 page, 52345 bytes).",
+            stderr="",
+        )
+        result = json.loads(self.compile_latex("main.tex"))
+        assert result["success"] is True
+        assert result["pages"] == 1
+        assert result["pdf_path"] == str(self.pdf_file)
+
+    @patch("server.subprocess.run")
+    def test_page_overflow(self, mock_run):
+        self.pdf_file.write_text("fake pdf")
+        mock_run.return_value = MagicMock(
+            stdout="Output written on main.pdf (2 pages, 102345 bytes).",
+            stderr="",
+        )
+        result = json.loads(self.compile_latex("main.tex"))
+        assert result["success"] is False
+        assert "2 pages" in result["error"]
+        assert result["pages"] == 2
+
+    @patch("server.subprocess.run")
+    def test_no_pdf_produced(self, mock_run):
+        # Don't create the PDF file
+        mock_run.return_value = MagicMock(stdout="! Missing $ inserted.", stderr="")
+        result = json.loads(self.compile_latex("main.tex"))
+        assert result["success"] is False
+        assert "no PDF produced" in result["error"]
+
+    @patch("server.subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="pdflatex", timeout=30))
+    def test_timeout(self, mock_run):
+        result = json.loads(self.compile_latex("main.tex"))
+        assert result["success"] is False
+        assert "timed out" in result["error"]
+
+    def test_path_validation_error(self):
+        result = json.loads(self.compile_latex("../../etc/passwd.tex"))
+        assert result["success"] is False
+        assert "escapes" in result["error"]
