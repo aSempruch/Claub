@@ -52,14 +52,14 @@ def compile_latex(file_path: str) -> str:
             text=True,
             timeout=COMPILE_TIMEOUT,
         )
-        compiler_output = (result.stdout + result.stderr)[-MAX_OUTPUT_CHARS:]
+        full_output = result.stdout + result.stderr
+        pages = parse_page_count(full_output)
+        compiler_output = full_output[-MAX_OUTPUT_CHARS:]
     except subprocess.TimeoutExpired:
         return json.dumps({"success": False, "error": "Compilation timed out (30s)", "pages": None, "pdf_path": None, "compiler_output": ""})
 
     if not os.path.isfile(pdf_path):
         return json.dumps({"success": False, "error": "Compilation failed — no PDF produced", "pages": None, "pdf_path": None, "compiler_output": compiler_output})
-
-    pages = parse_page_count(compiler_output)
 
     if pages is not None and pages > 1:
         return json.dumps({"success": False, "error": f"Resume is {pages} pages (max 1)", "pages": pages, "pdf_path": pdf_path, "compiler_output": compiler_output})
