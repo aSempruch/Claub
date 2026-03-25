@@ -11,6 +11,7 @@ import discord
 from claude_assistant.chunker import chunk_message
 from claude_assistant.claude_process import AgentProcess, AuthenticationError
 from claude_assistant.config import AssistantConfig
+from claude_assistant.file_sender import extract_files
 from claude_assistant.mcp_server import create_mcp_server
 from claude_assistant.router import Router
 from claude_assistant.schedule_store import ScheduleStore
@@ -306,37 +307,56 @@ class AssistantBot:
         result: str,
     ) -> None:
         """Chunk a result and send non-empty pieces to Discord."""
+        result, files = extract_files(result)
         chunks = chunk_message(result)
         if not chunks or all(not c.strip() for c in chunks):
-            log.warning("Agent %s returned empty response", agent_name)
+            if files:
+                # No text but have files — send files alone
+                await self._send_response(channel, agent_name, "", files=files)
+            else:
+                log.warning("Agent %s returned empty response", agent_name)
             return
-        for chunk in chunks:
+        for i, chunk in enumerate(chunks):
             if chunk.strip():
-                await self._send_response(channel, agent_name, chunk)
+                # Attach files to the last chunk
+                chunk_files = files if i == len(chunks) - 1 else None
+                await self._send_response(channel, agent_name, chunk, files=chunk_files)
 
     async def _send_response(
         self,
         channel: discord.TextChannel,
         agent_name: str,
         content: str,
+        files: list[discord.File] | None = None,
     ) -> None:
         """Send a message as the agent, using app identity or webhook per config."""
         agent_config = self.config.agents.get(agent_name)
         if not agent_config or not agent_config.display_name:
-            await channel.send(content)
+            kwargs: dict = {}
+            if content:
+                kwargs["content"] = content
+            if files:
+                kwargs["files"] = files
+            if kwargs:
+                await channel.send(**kwargs)
         else:
-            await self._webhook_send(channel, agent_name, content)
+            await self._webhook_send(channel, agent_name, content, files=files)
 
     async def _webhook_send(
         self,
         channel: discord.TextChannel,
         agent_name: str,
         content: str,
+        files: list[discord.File] | None = None,
     ) -> None:
         """Send a message as the agent via webhook with custom name/avatar."""
         agent_config = self.config.agents.get(agent_name)
         webhook = await self._get_or_create_webhook(channel)
-        kwargs: dict = {"content": content}
+        kwargs: dict = {}
+        if content:
+            kwargs["content"] = content
+        if files:
+            kwargs["files"] = files
         if agent_config and agent_config.display_name:
             kwargs["username"] = agent_config.display_name
         if agent_config and agent_config.avatar_url:
