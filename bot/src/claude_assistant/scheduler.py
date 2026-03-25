@@ -12,13 +12,20 @@ from claude_assistant.schedule_store import ScheduleStore
 
 log = logging.getLogger(__name__)
 
-JITTER_MU = 6.4       # lognormal mean parameter (~600s / 10min median)
-JITTER_SIGMA = 0.4    # lognormal spread parameter
-JITTER_MAX = 1800     # hard cap in seconds (30min)
+JITTER_MEDIAN_LOW = 480    # 8 minutes in seconds
+JITTER_MEDIAN_HIGH = 720   # 12 minutes in seconds
+JITTER_SIGMA = 0.4         # lognormal spread parameter
+JITTER_MAX = 1800          # hard cap in seconds (30min)
 
 
-def lognormal_jitter(mu: float = JITTER_MU, sigma: float = JITTER_SIGMA, max_delay: float = JITTER_MAX) -> float:
-    """Return a lognormal-distributed delay in seconds, clamped to *max_delay*."""
+def lognormal_jitter(sigma: float = JITTER_SIGMA, max_delay: float = JITTER_MAX) -> float:
+    """Return a lognormal-distributed delay in seconds, clamped to *max_delay*.
+
+    The median is randomized uniformly between 8 and 12 minutes on each call.
+    """
+    import math
+    median = random.uniform(JITTER_MEDIAN_LOW, JITTER_MEDIAN_HIGH)
+    mu = math.log(median)
     return min(random.lognormvariate(mu, sigma), max_delay)
 
 
