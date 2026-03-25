@@ -9,7 +9,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 # Add helpers to path (helpers.py has no module-level side effects)
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "mcps", "latex-resume"))
+# MCP servers live in ~/docker/claub/mcps/ (instance config, bind-mounted into container)
+_LATEX_RESUME_DIR = os.path.expanduser("~/docker/claub/mcps/latex-resume")
+sys.path.insert(0, _LATEX_RESUME_DIR)
 
 from helpers import parse_page_count, resolve_safe_path
 
