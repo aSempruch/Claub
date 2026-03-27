@@ -31,6 +31,7 @@ class AssistantBot:
         mcp_config: Path | None = None,
         agents_dir: Path | None = None,
         mcp_port: int = 9400,
+        all_skills: list[str] | None = None,
     ) -> None:
         self.config = config
         self.workspaces_dir = workspaces_dir
@@ -39,6 +40,7 @@ class AssistantBot:
         self.mcp_config = mcp_config
         self.agents_dir = agents_dir
         self.mcp_port = mcp_port
+        self.all_skills = all_skills or []
         self.router = Router(config)
 
         self._processes: dict[str, AgentProcess] = {}
@@ -77,6 +79,12 @@ class AssistantBot:
 
     # --- Agent process lifecycle ---
 
+    def _disallowed_skills_for(self, name: str) -> list[str]:
+        """Return skills this agent is NOT allowed to use."""
+        agent_config = self.config.agents.get(name)
+        allowed = set(agent_config.allowed_skills) if agent_config else set()
+        return [s for s in self.all_skills if s not in allowed]
+
     async def _start_agent(self, name: str) -> AgentProcess:
         """Start (or restart) an agent process. Returns the new process."""
         workspace = self.workspaces_dir / name
@@ -89,6 +97,7 @@ class AssistantBot:
             allowed_tools_additional=agent_config.allowed_tools_additional if agent_config else [],
             model=self.config.model,
             sibling_agent_names=list(self.config.agents.keys()),
+            disallowed_skills=self._disallowed_skills_for(name),
         )
         session_id = self.sessions.get(name)
         try:

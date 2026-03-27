@@ -16,6 +16,9 @@ fi
 if [ -f "/claub/config/CLAUDE.md" ]; then
     cp /claub/config/CLAUDE.md ~/.claude/CLAUDE.md
 fi
+if [ -d "/claub/config/skills" ]; then
+    cp -r /claub/config/skills ~/.claude/skills
+fi
 
 # Ensure data directories exist
 mkdir -p /claub/workspaces

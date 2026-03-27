@@ -84,6 +84,25 @@ class TestAgentProcess:
         assert not proc._is_result_event(event)
 
     @pytest.mark.asyncio
+    async def test_build_command_disallowed_skills(
+        self, workspace: Path
+    ) -> None:
+        proc = AgentProcess(
+            workspace=workspace,
+            agent_name="main",
+            sibling_agent_names=["main", "journalist"],
+            disallowed_skills=["amazon-browse", "deploy"],
+        )
+        cmd = proc._build_command(session_id=None)
+        idx = cmd.index("--disallowedTools")
+        disallowed = cmd[idx + 1:]
+        # Stop at the next flag if any
+        disallowed = [x for x in disallowed if not x.startswith("--")]
+        assert "Agent(journalist)" in disallowed
+        assert "Skill(amazon-browse)" in disallowed
+        assert "Skill(deploy)" in disallowed
+
+    @pytest.mark.asyncio
     async def test_env_includes_agent_name(
         self, workspace: Path
     ) -> None:

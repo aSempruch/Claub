@@ -8,7 +8,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from claude_assistant.config import load_config
+from claude_assistant.config import discover_skills, load_config
 from claude_assistant.discord_bot import AssistantBot
 from claude_assistant.schedule_store import ScheduleStore
 from claude_assistant.session import SessionStore
@@ -21,7 +21,7 @@ log = logging.getLogger("claude_assistant")
 logging.getLogger("claude_assistant.claude_process").setLevel(logging.DEBUG)
 
 
-def _resolve_paths() -> tuple[Path, Path, Path, Path, Path, Path]:
+def _resolve_paths() -> tuple[Path, Path, Path, Path, Path, Path, Path]:
     """Resolve paths relative to CLAUB_HOME (default: ~/.claub)."""
     claub_home = Path(os.environ.get(
         "CLAUB_HOME",
@@ -34,6 +34,7 @@ def _resolve_paths() -> tuple[Path, Path, Path, Path, Path, Path]:
         claub_home / "config" / "mcp.json",
         claub_home / "config" / "agents",
         claub_home / "data" / "schedules.json",
+        claub_home / "config" / "skills",
     )
 
 
@@ -47,7 +48,7 @@ def main() -> None:
         log.error("DISCORD_BOT_TOKEN environment variable is required")
         sys.exit(1)
 
-    config_path, workspaces_dir, sessions_path, mcp_config, agents_dir, schedules_path = _resolve_paths()
+    config_path, workspaces_dir, sessions_path, mcp_config, agents_dir, schedules_path, skills_dir = _resolve_paths()
 
     if not config_path.exists():
         log.error("Config not found: %s", config_path)
@@ -58,6 +59,7 @@ def main() -> None:
     config = load_config(config_path)
     sessions = SessionStore(sessions_path)
     schedules = ScheduleStore(schedules_path)
+    all_skills = discover_skills(skills_dir)
 
     bot = AssistantBot(
         config=config,
@@ -67,6 +69,7 @@ def main() -> None:
         mcp_config=mcp_config if mcp_config.exists() else None,
         agents_dir=agents_dir if agents_dir.exists() else None,
         mcp_port=mcp_port,
+        all_skills=all_skills,
     )
 
     log.info("Starting claude-assistant")

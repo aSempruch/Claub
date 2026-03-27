@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -12,6 +16,7 @@ class AgentConfig:
     display_name: str | None = None
     avatar_url: str | None = None
     allowed_tools_additional: list[str] = field(default_factory=list)
+    allowed_skills: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -35,6 +40,7 @@ def load_config(path: Path) -> AssistantConfig:
             display_name=(agent_raw or {}).get("display_name"),
             avatar_url=(agent_raw or {}).get("avatar_url"),
             allowed_tools_additional=(agent_raw or {}).get("allowed_tools_additional") or [],
+            allowed_skills=(agent_raw or {}).get("allowed_skills") or [],
         )
 
     if "main" not in agents:
@@ -44,3 +50,30 @@ def load_config(path: Path) -> AssistantConfig:
     model = raw.get("model")
 
     return AssistantConfig(agents=agents, allowed_user_ids=allowed_user_ids, model=model)
+
+
+def discover_skills(skills_dir: Path) -> list[str]:
+    """Scan a skills directory and return all skill names.
+
+    Each skill is a subdirectory containing a SKILL.md file. The skill name
+    is taken from the ``name`` field in the YAML frontmatter, falling back
+    to the directory name if not specified.
+    """
+    names: list[str] = []
+    if not skills_dir.is_dir():
+        return names
+    for skill_md in sorted(skills_dir.glob("*/SKILL.md")):
+        folder_name = skill_md.parent.name
+        name = folder_name
+        try:
+            text = skill_md.read_text()
+            match = re.match(r"^---\s*\n(.*?)\n---", text, re.DOTALL)
+            if match:
+                frontmatter = yaml.safe_load(match.group(1))
+                if isinstance(frontmatter, dict) and frontmatter.get("name"):
+                    name = frontmatter["name"]
+        except Exception:
+            log.warning("Failed to parse skill frontmatter: %s", skill_md)
+        names.append(name)
+    log.info("Discovered %d skill(s): %s", len(names), names)
+    return names
