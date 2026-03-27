@@ -168,8 +168,15 @@ class AgentProcess:
                 )
 
     async def _read_until_result(self) -> str:
+        """Read stream-json events until a result event arrives.
+
+        Collects text from assistant events across all turns so that text
+        produced before tool calls isn't lost — the ``result`` field in the
+        final event only contains text from the *last* turn.
+        """
         if not self._process or not self._process.stdout:
             raise RuntimeError("Process not available")
+        collected_text: list[str] = []
         while True:
             line = await self._process.stdout.readline()
             if not line:
@@ -185,8 +192,33 @@ class AgentProcess:
             if sid:
                 self._session_id = sid
 
+            # Collect text blocks from assistant messages across all turns
+            if event.get("type") == "assistant":
+                msg = event.get("message", {})
+                for block in msg.get("content", []):
+                    if block.get("type") == "text" and block.get("text", "").strip():
+                        collected_text.append(block["text"].strip())
+
             if self._is_result_event(event):
-                return self._extract_result(event)
+                result_text = self._extract_result(event)
+                if not collected_text:
+                    return result_text
+                # The result field only has text from the last turn.
+                # If earlier turns produced text not in result, prepend it.
+                if result_text and result_text.strip() == collected_text[-1]:
+                    # Result matches only the last text block — include earlier ones
+                    if len(collected_text) > 1:
+                        return "\n\n".join(collected_text)
+                    return result_text
+                elif not result_text.strip():
+                    # Result is empty but we collected text earlier
+                    return "\n\n".join(collected_text)
+                else:
+                    # Result has content — check if it already includes everything
+                    # by seeing if our first collected text appears in the result
+                    if collected_text[0] in result_text:
+                        return result_text
+                    return "\n\n".join(collected_text + [result_text]) if result_text.strip() else "\n\n".join(collected_text)
 
     @property
     def session_id(self) -> str | None:

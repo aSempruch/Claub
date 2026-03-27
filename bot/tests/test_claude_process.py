@@ -105,3 +105,90 @@ class TestAgentProcess:
         proc = AgentProcess(workspace=workspace)
         env = proc._env()
         assert env["HOME"] == os.environ["HOME"]
+
+
+class TestReadUntilResult:
+    """Tests for _read_until_result collecting text across multi-turn responses."""
+
+    def _make_proc(self, workspace: Path, lines: list[str]) -> AgentProcess:
+        """Create an AgentProcess with a mock stdout that yields the given JSON lines."""
+        proc = AgentProcess(workspace=workspace)
+        proc._process = MagicMock()
+        data = b"\n".join(l.encode() for l in lines) + b"\n"
+        proc._process.stdout = asyncio.StreamReader()
+        proc._process.stdout.feed_data(data)
+        proc._process.stdout.feed_eof()
+        return proc
+
+    @pytest.mark.asyncio
+    async def test_simple_result(self, workspace: Path) -> None:
+        """Result with text in result field, no assistant events."""
+        lines = [
+            json.dumps({"type": "result", "result": "Hello!"}),
+        ]
+        proc = self._make_proc(workspace, lines)
+        assert await proc._read_until_result() == "Hello!"
+
+    @pytest.mark.asyncio
+    async def test_text_before_tool_call_then_empty_result(self, workspace: Path) -> None:
+        """Text in assistant event, tool call, then empty result — text should be preserved."""
+        lines = [
+            json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "Here is your morning brief."}]}}),
+            json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "t1", "name": "Write", "input": {}}]}}),
+            json.dumps({"type": "result", "result": ""}),
+        ]
+        proc = self._make_proc(workspace, lines)
+        result = await proc._read_until_result()
+        assert "Here is your morning brief." in result
+
+    @pytest.mark.asyncio
+    async def test_text_before_tool_call_with_trailing_text(self, workspace: Path) -> None:
+        """Text before tool call, then more text after — both should appear."""
+        lines = [
+            json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "Here is a haiku."}]}}),
+            json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "t1", "name": "Write", "input": {}}]}}),
+            json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "Written to file."}]}}),
+            json.dumps({"type": "result", "result": "Written to file."}),
+        ]
+        proc = self._make_proc(workspace, lines)
+        result = await proc._read_until_result()
+        assert "Here is a haiku." in result
+        assert "Written to file." in result
+
+    @pytest.mark.asyncio
+    async def test_result_already_has_all_text(self, workspace: Path) -> None:
+        """When result already contains the text, don't duplicate it."""
+        lines = [
+            json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "Hello!"}]}}),
+            json.dumps({"type": "result", "result": "Hello!"}),
+        ]
+        proc = self._make_proc(workspace, lines)
+        result = await proc._read_until_result()
+        assert result == "Hello!"
+
+    @pytest.mark.asyncio
+    async def test_session_id_still_captured(self, workspace: Path) -> None:
+        """Init events should still set session_id."""
+        lines = [
+            json.dumps({"type": "system", "subtype": "init", "session_id": "sess-abc"}),
+            json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "Hi"}]}}),
+            json.dumps({"type": "result", "result": "Hi"}),
+        ]
+        proc = self._make_proc(workspace, lines)
+        await proc._read_until_result()
+        assert proc._session_id == "sess-abc"
+
+    @pytest.mark.asyncio
+    async def test_multiple_text_blocks_across_turns(self, workspace: Path) -> None:
+        """Multiple text blocks across multiple turns with tool calls between."""
+        lines = [
+            json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "Part 1"}]}}),
+            json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "t1", "name": "Write", "input": {}}]}}),
+            json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "Part 2"}]}}),
+            json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "t2", "name": "Edit", "input": {}}]}}),
+            json.dumps({"type": "result", "result": ""}),
+        ]
+        proc = self._make_proc(workspace, lines)
+        result = await proc._read_until_result()
+        assert "Part 1" in result
+        assert "Part 2" in result
