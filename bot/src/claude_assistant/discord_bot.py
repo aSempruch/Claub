@@ -139,18 +139,14 @@ class AssistantBot:
         return await self._start_agent(name)
 
     async def _supervise_all(self) -> None:
-        """Background task that monitors all agent processes and restarts dead ones."""
+        """Background task that monitors agent processes and notifies on unexpected death."""
         try:
             while True:
                 await asyncio.sleep(5)
                 for name, process in list(self._processes.items()):
                     if not process.is_alive and name not in self._reaped:
-                        log.warning("Agent %s died, restarting...", name)
-                        await self._notify_channel(name, f"Agent `{name}` died, restarting...")
-                        try:
-                            await self._start_agent(name)
-                        except Exception:
-                            log.exception("Failed to restart agent %s", name)
+                        log.warning("Agent %s died unexpectedly", name)
+                        await self._notify_channel(name, f"Agent `{name}` died. Send a message to restart it.")
         except asyncio.CancelledError:
             log.info("Supervisor loop cancelled")
             return

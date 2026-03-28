@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import random
+from datetime import datetime
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -62,6 +63,7 @@ class AgentProcess:
         self._lock = asyncio.Lock()
         self._lifecycle_lock = asyncio.Lock()
         self._ready = asyncio.Event()
+        self._first_message = False
         # Lognormal idle timeout: median 45 min, wide spread
         self.reap_threshold = 2700 * random.lognormvariate(0, 0.3)
 
@@ -139,6 +141,7 @@ class AgentProcess:
                 limit=10 * 1024 * 1024,  # 10MB — Claude stream-json can emit large lines
             )
             asyncio.create_task(self._drain_stderr())
+            self._first_message = True
             self._ready.set()
 
     async def _drain_stderr(self) -> None:
@@ -163,6 +166,10 @@ class AgentProcess:
         if not self._process or not self._process.stdin or not self._process.stdout:
             raise RuntimeError(f"Agent {self.agent_name} process not started")
         async with self._lock:
+            if self._first_message:
+                now = datetime.now().strftime("%A, %B %d, %Y at %I:%M %p")
+                content = f"[current time: {now}] {content}"
+                self._first_message = False
             sid = self._session_id or "default"
             msg = self._format_input(content, sid)
             self._process.stdin.write(msg.encode() + b"\n")
