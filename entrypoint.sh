@@ -20,8 +20,9 @@ if [ -d "/claub/config/skills" ]; then
     cp -r /claub/config/skills ~/.claude/skills
 fi
 
-# Ensure data directories exist
+# Ensure data and workspace directories exist
 mkdir -p /claub/workspaces
+
 
 # Install dependencies for mounted MCP servers
 for dir in /claub/mcps/*/; do

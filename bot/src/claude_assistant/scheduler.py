@@ -17,16 +17,35 @@ JITTER_MEDIAN_HIGH = 720   # 12 minutes in seconds
 JITTER_SIGMA = 0.4         # lognormal spread parameter
 JITTER_MAX = 1800          # hard cap in seconds (30min)
 
+# Recurring schedules get much wider jitter so firings feel natural
+RECURRING_JITTER_MEDIAN_LOW = 900    # 15 minutes in seconds
+RECURRING_JITTER_MEDIAN_HIGH = 1500  # 25 minutes in seconds
+RECURRING_JITTER_SIGMA = 0.6        # wider lognormal spread
+RECURRING_JITTER_MAX = 3300          # hard cap 55 minutes
+
 
 def lognormal_jitter(sigma: float = JITTER_SIGMA, max_delay: float = JITTER_MAX) -> float:
     """Return a lognormal-distributed delay in seconds, clamped to *max_delay*.
 
     The median is randomized uniformly between 8 and 12 minutes on each call.
+    Used for one-shot schedules.
     """
     import math
     median = random.uniform(JITTER_MEDIAN_LOW, JITTER_MEDIAN_HIGH)
     mu = math.log(median)
     return min(random.lognormvariate(mu, sigma), max_delay)
+
+
+def recurring_jitter() -> float:
+    """Return a wide lognormal-distributed delay for recurring schedules.
+
+    Median randomly chosen between 15-25 minutes with high variance.
+    Most firings land 10-40 min after the cron time, occasionally up to ~55 min.
+    """
+    import math
+    median = random.uniform(RECURRING_JITTER_MEDIAN_LOW, RECURRING_JITTER_MEDIAN_HIGH)
+    mu = math.log(median)
+    return min(random.lognormvariate(mu, RECURRING_JITTER_SIGMA), RECURRING_JITTER_MAX)
 
 
 ScheduleCallback = Callable[[str, str], Awaitable[None]]
@@ -80,7 +99,7 @@ class Scheduler:
             log.debug("Job %s not found in scheduler", job_id)
 
     async def _run(self, agent_name: str, prompt: str) -> None:
-        jitter = lognormal_jitter()
+        jitter = recurring_jitter()
         log.info("Scheduled task for %s — delaying %.0fs", agent_name, jitter)
         await asyncio.sleep(jitter)
         log.info("Scheduled task firing for %s", agent_name)

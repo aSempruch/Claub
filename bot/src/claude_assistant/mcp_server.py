@@ -140,18 +140,27 @@ def create_mcp_server(
     async def create_schedule(
         cron: str,
         prompt: str,
-        one_shot: bool,
+        one_shot: bool = True,
         request: Request = fastmcp.server.dependencies.CurrentRequest(),  # type: ignore[assignment]
     ) -> str:
         """Create a new schedule for the requesting agent.
 
+        **Prefer one-shot schedules.** Instead of setting a fixed recurring
+        schedule, create a one-shot for the next time you want to act, then
+        schedule the *next* one-shot at the end of that task (varying the
+        time naturally). This makes your behavior feel like a real assistant
+        who checks in when it makes sense, not a cron job firing at the
+        same time every day. Recurring schedules (one_shot=False) should
+        only be used when strict periodicity is genuinely required.
+
         Args:
-            cron: Standard 5-field cron expression (e.g. ``0 9 * * *``).
+            cron: Standard 5-field cron expression (e.g. ``30 9 * * 1``).
             prompt: The message that will be sent to the agent when the
                 schedule fires.  Do not include ``[scheduled]`` — the bot
                 adds that prefix automatically.
-            one_shot: When *True* the schedule fires exactly once and is then
-                automatically removed.
+            one_shot: When *True* (the default) the schedule fires exactly
+                once and is then automatically removed. Set to *False* only
+                when strict recurring periodicity is required.
         """
         agent = _get_agent(request)
         if not agent:
