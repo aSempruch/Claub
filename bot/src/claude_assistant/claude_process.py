@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import random
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -61,6 +62,8 @@ class AgentProcess:
         self._lock = asyncio.Lock()
         self._lifecycle_lock = asyncio.Lock()
         self._ready = asyncio.Event()
+        # Lognormal idle timeout: median 45 min, wide spread
+        self.reap_threshold = 2700 * random.lognormvariate(0, 0.3)
 
     def _build_command(self, session_id: str | None) -> list[str]:
         cmd = [

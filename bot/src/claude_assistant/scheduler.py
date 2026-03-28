@@ -4,6 +4,7 @@ import asyncio
 import logging
 import random
 from collections.abc import Awaitable, Callable
+from datetime import datetime
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -103,7 +104,8 @@ class Scheduler:
         log.info("Scheduled task for %s — delaying %.0fs", agent_name, jitter)
         await asyncio.sleep(jitter)
         log.info("Scheduled task firing for %s", agent_name)
-        prefixed = f"[scheduled] {prompt}"
+        now = datetime.now().strftime("%A, %B %d, %Y at %I:%M %p")
+        prefixed = f"[scheduled — current time: {now}] {prompt}"
         await self._callback(agent_name, prefixed)
 
     async def _run_one_shot(self, agent_name: str, entry_id: str, prompt: str) -> None:
@@ -117,7 +119,8 @@ class Scheduler:
         log.info("One-shot schedule %s for %s — firing and removing", entry_id, agent_name)
         jitter = lognormal_jitter()
         await asyncio.sleep(jitter)
-        prefixed = f"[scheduled] {prompt}"
+        now = datetime.now().strftime("%A, %B %d, %Y at %I:%M %p")
+        prefixed = f"[scheduled — current time: {now}] {prompt}"
         await self._callback(agent_name, prefixed)
 
     def get_jobs(self) -> list:

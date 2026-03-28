@@ -52,7 +52,7 @@ class AssistantBot:
         self._agent_lock = asyncio.Lock()  # serialize all agent API calls
         self._last_activity: dict[str, float] = {}  # agent name -> timestamp
         self._reaped: set[str] = set()  # agents intentionally killed by idle reaper
-        self._idle_timeout = 600  # kill idle processes after 10 minutes
+        # Per-process reap threshold is set in AgentProcess.__init__ (lognormal, median 45 min)
 
         intents = discord.Intents.default()
         intents.message_content = True
@@ -166,9 +166,10 @@ class AssistantBot:
                         continue
                     last = self._last_activity.get(name, 0)
                     idle_secs = now - last if last else 0
-                    if last and idle_secs > self._idle_timeout:
+                    if last and idle_secs > process.reap_threshold:
                         log.info(
-                            "Reaping idle agent %s (idle %.0fs)", name, idle_secs
+                            "Reaping idle agent %s (idle %.0fs, threshold %.0fs)",
+                            name, idle_secs, process.reap_threshold,
                         )
                         self._reaped.add(name)
                         await process.stop()
