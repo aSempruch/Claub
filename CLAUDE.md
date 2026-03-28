@@ -47,7 +47,7 @@ AssistantBot (discord.py)  [runs in Docker container]
         └─ Agents manage their own schedules via list/create/delete tools
 ```
 
-Claude CLI uses its native `~/.claude/` path inside the container. Config files are copied from `/claub/config/` into `~/.claude/` at container startup by the entrypoint script. Credentials persist in a named Docker volume (`claude-home`).
+Claude CLI uses its native `~/.claude/` path inside the container. Settings and CLAUDE.md are copied from `/claub/config/` into `~/.claude/` at container startup by the entrypoint script. Agent definitions are passed programmatically via the `--agents` CLI flag (not copied into `~/.claude/agents/`). Credentials persist in a named Docker volume (`claude-home`).
 
 ## Project Structure
 
@@ -98,7 +98,7 @@ scripts/                          # Legacy service management (launchd, pre-Dock
 
 ## Configuration
 
-All configuration lives in `/claub/config/` inside the container (bind-mounted from the host, e.g. `~/docker/claub/config/`). The entrypoint copies agent prompts, `settings.json`, and `CLAUDE.md` into `~/.claude/` at container startup so Claude CLI finds them in the expected locations. The base path is set via `CLAUB_HOME=/claub` (configurable).
+All configuration lives in `/claub/config/` inside the container (bind-mounted from the host, e.g. `~/docker/claub/config/`). The entrypoint copies `settings.json` and `CLAUDE.md` into `~/.claude/` at container startup. Agent `.md` files are read by the bot and passed to each Claude CLI process via the `--agents` JSON flag, so each process only knows about its own agent definition. The base path is set via `CLAUB_HOME=/claub` (configurable).
 
 ### agents.yaml
 
@@ -318,9 +318,10 @@ docker exec -it claude-claub-1 bash -c 'cd /claub/workspaces/main && claude --ag
 - **Lifecycle lock**: Separate lock in AgentProcess protects start/stop/restart transitions from racing with the supervisor.
 - **Idle reaper**: Background task kills agent processes after 10 minutes of inactivity. Prevents stale processes from holding expiring OAuth tokens, which caused auth races when multiple long-lived processes shared the same credentials file. A `_reaped` set prevents the supervisor from immediately restarting intentionally killed processes.
 - **Global agent lock**: `_agent_lock` in `AssistantBot` serializes all agent API calls so only one agent talks to Claude at a time, preventing credential/token races.
-- **Docker-first**: The container runs Claude CLI with its native `~/.claude/` path. Config is copied from `/claub/config/` into `~/.claude/` at startup by the entrypoint. No HOME override hack.
+- **Docker-first**: The container runs Claude CLI with its native `~/.claude/` path. Settings/CLAUDE.md are copied from `/claub/config/` into `~/.claude/` at startup by the entrypoint. No HOME override hack.
 - **acceptEdits permission mode**: All processes run with `--permission-mode acceptEdits`
-- **Entrypoint config copy**: `entrypoint.sh` copies agents/, settings.json, CLAUDE.md from `/claub/config/` into `~/.claude/` on every container start. No symlinks — plain copies.
+- **Inline agent definitions**: Agent `.md` files are parsed by the bot and passed to each CLI process via `--agents` JSON flag. Each process only sees its own agent — no `disallowedTools` hack needed to prevent cross-agent invocation. Built-in agents (Explore, Plan, etc.) remain available.
+- **Entrypoint config copy**: `entrypoint.sh` copies settings.json and CLAUDE.md from `/claub/config/` into `~/.claude/` on every container start. No symlinks — plain copies.
 - **Separated instance from source**: Bot code is baked into the image; user config and runtime state are bind-mounted from the host into `/claub/` (configurable via `CLAUB_HOME` env var).
 - **Embedded MCP server for schedules**: FastMCP HTTP server runs inside the bot process on localhost. Agents manage their own cron schedules via MCP tools. Changes take effect immediately — no file polling or restart needed. One-shot schedules are deleted from persistence before execution to prevent duplicate firing on crash recovery.
 

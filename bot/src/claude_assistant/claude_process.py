@@ -44,19 +44,17 @@ class AgentProcess:
         workspace: Path,
         mcp_configs: list[Path] | None = None,
         agent_name: str | None = None,
+        agent_definition: dict[str, str] | None = None,
         allowed_tools_additional: list[str] | None = None,
         model: str | None = None,
-        sibling_agent_names: list[str] | None = None,
         disallowed_skills: list[str] | None = None,
     ) -> None:
         self.workspace = workspace
         self.mcp_configs = mcp_configs or []
         self.agent_name = agent_name
+        self.agent_definition = agent_definition
         self.allowed_tools_additional = allowed_tools_additional or []
         self.model = model
-        self.sibling_agent_names = [
-            n for n in (sibling_agent_names or []) if n != agent_name
-        ]
         self.disallowed_skills = disallowed_skills or []
         self._process: asyncio.subprocess.Process | None = None
         self._session_id: str | None = None
@@ -72,15 +70,22 @@ class AgentProcess:
             "--verbose",
             "--permission-mode", "acceptEdits",
         ]
-        if self.agent_name:
+        if self.agent_name and self.agent_definition:
+            agents_json = json.dumps({
+                self.agent_name: {
+                    "description": self.agent_definition.get("description", ""),
+                    "prompt": self.agent_definition.get("prompt", ""),
+                }
+            })
+            cmd.extend(["--agents", agents_json])
+            cmd.extend(["--agent", self.agent_name])
+        elif self.agent_name:
             cmd.extend(["--agent", self.agent_name])
         if self.mcp_configs:
             cmd.extend(["--mcp-config"] + [str(p) for p in self.mcp_configs])
         if self.allowed_tools_additional:
             cmd.extend(["--allowedTools"] + self.allowed_tools_additional)
-        disallowed = [f"Agent({n})" for n in self.sibling_agent_names] + [
-            f"Skill({s})" for s in self.disallowed_skills
-        ]
+        disallowed = [f"Skill({s})" for s in self.disallowed_skills]
         if disallowed:
             cmd.extend(["--disallowedTools"] + disallowed)
         if self.model:

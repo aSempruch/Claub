@@ -36,7 +36,7 @@ class TestAgentProcess:
         assert cmd[idx + 1] == "uuid-123"
 
     @pytest.mark.asyncio
-    async def test_build_command_with_agent_name(
+    async def test_build_command_with_agent_name_no_definition(
         self, workspace: Path
     ) -> None:
         proc = AgentProcess(workspace=workspace, agent_name="journalist")
@@ -44,6 +44,27 @@ class TestAgentProcess:
         assert "--agent" in cmd
         idx = cmd.index("--agent")
         assert cmd[idx + 1] == "journalist"
+        assert "--agents" not in cmd
+
+    @pytest.mark.asyncio
+    async def test_build_command_with_agent_definition(
+        self, workspace: Path
+    ) -> None:
+        defn = {"description": "A news bot", "prompt": "You are a journalist."}
+        proc = AgentProcess(
+            workspace=workspace,
+            agent_name="journalist",
+            agent_definition=defn,
+        )
+        cmd = proc._build_command(session_id=None)
+        assert "--agents" in cmd
+        idx = cmd.index("--agents")
+        agents_json = json.loads(cmd[idx + 1])
+        assert "journalist" in agents_json
+        assert agents_json["journalist"]["description"] == "A news bot"
+        assert agents_json["journalist"]["prompt"] == "You are a journalist."
+        assert "--agent" in cmd
+        assert cmd[cmd.index("--agent") + 1] == "journalist"
 
     @pytest.mark.asyncio
     async def test_format_input_message(
@@ -90,7 +111,6 @@ class TestAgentProcess:
         proc = AgentProcess(
             workspace=workspace,
             agent_name="main",
-            sibling_agent_names=["main", "journalist"],
             disallowed_skills=["amazon-browse", "deploy"],
         )
         cmd = proc._build_command(session_id=None)
@@ -98,9 +118,10 @@ class TestAgentProcess:
         disallowed = cmd[idx + 1:]
         # Stop at the next flag if any
         disallowed = [x for x in disallowed if not x.startswith("--")]
-        assert "Agent(journalist)" in disallowed
         assert "Skill(amazon-browse)" in disallowed
         assert "Skill(deploy)" in disallowed
+        # No Agent(...) entries — agents are isolated via --agents flag
+        assert not any(x.startswith("Agent(") for x in disallowed)
 
     @pytest.mark.asyncio
     async def test_env_includes_agent_name(

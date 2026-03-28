@@ -52,6 +52,26 @@ def load_config(path: Path) -> AssistantConfig:
     return AssistantConfig(agents=agents, allowed_user_ids=allowed_user_ids, model=model)
 
 
+def parse_agent_file(path: Path) -> dict[str, str]:
+    """Parse an agent .md file into a dict with 'name', 'description', and 'prompt'.
+
+    Expects YAML frontmatter (--- delimited) with name/description fields,
+    followed by the prompt body.
+    """
+    text = path.read_text()
+    match = re.match(r"^---\s*\n(.*?)\n---\s*\n?(.*)", text, re.DOTALL)
+    if not match:
+        raise ValueError(f"Agent file missing YAML frontmatter: {path}")
+    frontmatter = yaml.safe_load(match.group(1))
+    if not isinstance(frontmatter, dict) or not frontmatter.get("name"):
+        raise ValueError(f"Agent file missing 'name' in frontmatter: {path}")
+    return {
+        "name": frontmatter["name"],
+        "description": frontmatter.get("description", ""),
+        "prompt": match.group(2).strip(),
+    }
+
+
 def discover_skills(skills_dir: Path) -> list[str]:
     """Scan a skills directory and return all skill names.
 

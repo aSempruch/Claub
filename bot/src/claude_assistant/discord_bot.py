@@ -10,7 +10,7 @@ import discord
 
 from claude_assistant.chunker import chunk_message
 from claude_assistant.claude_process import AgentProcess, AuthenticationError
-from claude_assistant.config import AssistantConfig
+from claude_assistant.config import AssistantConfig, parse_agent_file
 from claude_assistant.file_sender import extract_files
 from claude_assistant.mcp_server import create_mcp_server
 from claude_assistant.router import Router
@@ -85,6 +85,19 @@ class AssistantBot:
         allowed = set(agent_config.allowed_skills) if agent_config else set()
         return [s for s in self.all_skills if s not in allowed]
 
+    def _load_agent_definition(self, name: str) -> dict[str, str] | None:
+        """Load the agent .md file from the agents dir, if it exists."""
+        if not self.agents_dir:
+            return None
+        agent_file = self.agents_dir / f"{name}.md"
+        if not agent_file.exists():
+            return None
+        try:
+            return parse_agent_file(agent_file)
+        except Exception:
+            log.exception("Failed to parse agent file %s", agent_file)
+            return None
+
     async def _start_agent(self, name: str) -> AgentProcess:
         """Start (or restart) an agent process. Returns the new process."""
         workspace = self.workspaces_dir / name
@@ -94,9 +107,9 @@ class AssistantBot:
             workspace=workspace,
             mcp_configs=self._mcp_configs_for(name),
             agent_name=name,
+            agent_definition=self._load_agent_definition(name),
             allowed_tools_additional=agent_config.allowed_tools_additional if agent_config else [],
             model=self.config.model,
-            sibling_agent_names=list(self.config.agents.keys()),
             disallowed_skills=self._disallowed_skills_for(name),
         )
         session_id = self.sessions.get(name)
