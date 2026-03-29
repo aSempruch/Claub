@@ -178,7 +178,7 @@ async def _create_schedule(
     log.info("Created schedule %s for %s: %r", entry["id"], agent, prompt)
     shot_label = "one-shot " if one_shot else ""
     msg = f"Schedule created: {shot_label}`{cron}` — {prompt}"
-    if notify:
+    if notify and not one_shot:
         await notify(agent, msg)
     return f"Created schedule {entry['id']}: {prompt!r} at {cron}"
 

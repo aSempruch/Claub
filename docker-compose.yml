@@ -9,6 +9,7 @@ services:
     volumes:
       - claude-home:/root/.claude
       - ~/docker/claub:/claub
+      - /tmp/playwright:/tmp/playwright:ro
     init: true
     restart: unless-stopped
     healthcheck:
