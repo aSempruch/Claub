@@ -133,3 +133,35 @@ def test_error_message_mentions_other_agents(store: ScheduleStore, history: Firi
     result = check_schedule_density(store, history, "0 18 * * *", one_shot=False)
     assert result is not None
     assert "other agents" in result.lower()
+
+
+def test_multi_agent_daily_limit(store: ScheduleStore, history: FiringHistory) -> None:
+    # Agent A has 3 daily schedules, agent B has 2 — agent B tries to add a 6th globally
+    store.create("main", cron="0 8 * * *", prompt="a", one_shot=False)
+    store.create("main", cron="0 10 * * *", prompt="b", one_shot=False)
+    store.create("main", cron="0 12 * * *", prompt="c", one_shot=False)
+    store.create("journalist", cron="0 14 * * *", prompt="d", one_shot=False)
+    store.create("journalist", cron="0 16 * * *", prompt="e", one_shot=False)
+    # Journalist tries to add a 3rd — globally that's 6/day
+    result = check_schedule_density(store, history, "0 18 * * *", one_shot=False)
+    assert result is not None
+    assert "Error" in result
+
+
+def test_every_30_min_cron_rejected(store: ScheduleStore, history: FiringHistory) -> None:
+    # An agent tries to schedule something every 30 minutes — 48/day
+    result = check_schedule_density(store, history, "*/30 * * * *", one_shot=False)
+    assert result is not None
+    assert "Error" in result
+
+
+def test_one_shot_chaining_detected(store: ScheduleStore, history: FiringHistory) -> None:
+    # Simulates an agent that fires a one-shot, then schedules another.
+    # After 5 rounds, the store is empty (each one-shot deleted after firing)
+    # but history shows 5 recent firings. The 6th attempt should be rejected.
+    for i in range(5):
+        history.record("main", f"id{i}", "0 9 * * *", f"chain {i}", True)
+    # Agent tries to schedule yet another one-shot
+    result = check_schedule_density(store, history, "0 9 * * *", one_shot=True)
+    assert result is not None
+    assert "Error" in result
