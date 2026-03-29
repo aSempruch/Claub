@@ -21,7 +21,7 @@ Two new components:
 | `MAX_FIRINGS_PER_DAY` | 5 | `mcp_server.py` |
 | `MAX_FIRINGS_PER_WEEK` | 20 | `mcp_server.py` |
 | `DENSITY_HORIZON_DAYS` | 120 | `mcp_server.py` |
-| `FIRING_HISTORY_RETENTION_DAYS` | 30 | `firing_history.py` |
+| `FIRING_HISTORY_RETENTION_DAYS` | 30 | `firing_history.py` (default; overridable via `CLAUB_SCHEDULE_HISTORY_RETENTION_DAYS` env var) |
 
 ## Component 1: Firing History
 
@@ -67,7 +67,7 @@ class FiringHistory:
 - `_run()` — after the callback completes, call `history.record(...)`
 - `_run_one_shot()` — after the callback completes, call `history.record(...)`
 
-**Wiring:** `FiringHistory` is instantiated in `main.py` alongside `ScheduleStore`, stored at `/claub/data/firing_history.json`. Passed to both `Scheduler` (for recording) and `create_mcp_server` (for the density check).
+**Wiring:** `FiringHistory` is instantiated in `main.py` alongside `ScheduleStore`, stored at `/claub/data/firing_history.json`. Retention is read from the `CLAUB_SCHEDULE_HISTORY_RETENTION_DAYS` env var (default 30). Passed to both `Scheduler` (for recording) and `create_mcp_server` (for the density check).
 
 ## Component 2: Density Validation
 
