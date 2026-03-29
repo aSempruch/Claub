@@ -3,6 +3,8 @@ services:
     build: .
     environment:
       - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
+      - LEETCODE_SESSION=${LEETCODE_SESSION}
+      - LEETCODE_CSRF_TOKEN=${LEETCODE_CSRF_TOKEN}
       - TZ=America/New_York
     volumes:
       - claude-home:/root/.claude
