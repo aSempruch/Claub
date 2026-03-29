@@ -199,6 +199,8 @@ scripts/playwright-mcp.sh logs      # View logs
 
 The service runs `npx @playwright/mcp@latest --port 3846 --host 127.0.0.1 --allowed-hosts host.docker.internal:3846` and auto-starts on reboot.
 
+**Snapshot file sharing:** Agents save Playwright snapshots to `/tmp/playwright/` to keep large accessibility trees out of context. Since Playwright runs on the host, the file is written to the host's `/tmp/playwright/`, which is bind-mounted read-only into the container at the same path. This requires the Docker runtime (e.g., Colima) to mount `/tmp/playwright` into the VM — this is **not** done by default. For Colima, add it to the `mounts` list in `~/.colima/default/colima.yaml`. Docker Desktop for Mac should work out of the box since it shares `/tmp` by default. **This is a portability concern** — new users or different Docker runtimes may need manual mount configuration for snapshot sharing to work.
+
 #### Custom MCP Servers
 
 Custom MCP servers live in `/claub/mcps/` (bind-mounted from host). The entrypoint automatically runs `uv sync` for any subdirectory containing a `pyproject.toml` on every container start, so Python-based MCPs are always ready.
