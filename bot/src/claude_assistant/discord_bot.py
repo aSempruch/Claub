@@ -12,6 +12,7 @@ from claude_assistant.chunker import chunk_message
 from claude_assistant.claude_process import AgentProcess, AuthenticationError
 from claude_assistant.config import AssistantConfig, parse_agent_file
 from claude_assistant.file_sender import extract_files
+from claude_assistant.firing_history import FiringHistory
 from claude_assistant.mcp_server import create_mcp_server
 from claude_assistant.router import Router
 from claude_assistant.schedule_store import ScheduleStore
@@ -28,6 +29,7 @@ class AssistantBot:
         workspaces_dir: Path,
         session_store: SessionStore,
         schedule_store: ScheduleStore,
+        firing_history: FiringHistory | None = None,
         mcp_config: Path | None = None,
         agents_dir: Path | None = None,
         mcp_port: int = 9400,
@@ -37,6 +39,7 @@ class AssistantBot:
         self.workspaces_dir = workspaces_dir
         self.sessions = session_store
         self.schedule_store = schedule_store
+        self.firing_history = firing_history
         self.mcp_config = mcp_config
         self.agents_dir = agents_dir
         self.mcp_port = mcp_port
@@ -65,7 +68,12 @@ class AssistantBot:
             log.info("Discord connected as %s", self._client.user)
             self._supervisor_task = asyncio.create_task(self._supervise_all())
             self._idle_reaper_task = asyncio.create_task(self._reap_idle_processes())
-            self._scheduler = Scheduler(self.schedule_store, self._handle_scheduled, valid_agents=set(self.config.agents.keys()))
+            self._scheduler = Scheduler(
+                self.schedule_store,
+                self._handle_scheduled,
+                valid_agents=set(self.config.agents.keys()),
+                history=self.firing_history,
+            )
             self._scheduler.start()
             self._mcp_server_task = asyncio.create_task(self._start_mcp_server())
 
@@ -177,7 +185,12 @@ class AssistantBot:
     async def _start_mcp_server(self) -> None:
         import uvicorn
 
-        mcp = create_mcp_server(self.schedule_store, self._scheduler, notify=self._notify_channel)
+        mcp = create_mcp_server(
+            self.schedule_store,
+            self._scheduler,
+            notify=self._notify_channel,
+            history=self.firing_history,
+        )
         app = mcp.http_app()
         config = uvicorn.Config(app, host="127.0.0.1", port=self.mcp_port, log_level="warning")
         self._uvicorn_server = uvicorn.Server(config)
