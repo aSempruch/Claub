@@ -1,7 +1,14 @@
 import pytest
-from unittest.mock import AsyncMock
+from pathlib import Path
+from unittest.mock import AsyncMock, patch
+from claude_assistant.firing_history import FiringHistory
 from claude_assistant.schedule_store import ScheduleStore
 from claude_assistant.scheduler import Scheduler
+
+
+@pytest.fixture
+def history(tmp_path: Path) -> FiringHistory:
+    return FiringHistory(tmp_path / "firing_history.json")
 
 
 @pytest.fixture
@@ -55,9 +62,37 @@ def test_filter_orphaned_agents(store: ScheduleStore, callback: AsyncMock) -> No
 async def test_one_shot_fires_and_deletes(store: ScheduleStore, callback: AsyncMock) -> None:
     entry = store.create("main", cron="0 9 * * *", prompt="one-time", one_shot=True)
     scheduler = Scheduler(store, callback)
-    await scheduler._run_one_shot("main", entry["id"], "one-time")
+    with patch("claude_assistant.scheduler.lognormal_jitter", return_value=0):
+        await scheduler._run_one_shot("main", entry["id"], "0 9 * * *", "one-time")
     callback.assert_called_once()
     call_args = callback.call_args[0]
     assert call_args[0] == "main"
-    assert "[scheduled]" in call_args[1]
+    assert "[scheduled" in call_args[1]
     assert store.list("main") == []
+
+
+@pytest.mark.asyncio
+async def test_run_records_firing(store, history, callback):
+    sched = Scheduler(store, callback, history=history)
+    with patch("claude_assistant.scheduler.recurring_jitter", return_value=0), \
+         patch("claude_assistant.scheduler.lognormal_jitter", return_value=0):
+        await sched._run("main", "abc123", "0 9 * * *", "do stuff")
+    entries = history.all()
+    assert len(entries) == 1
+    assert entries[0]["agent"] == "main"
+    assert entries[0]["cron"] == "0 9 * * *"
+    assert entries[0]["one_shot"] is False
+
+
+@pytest.mark.asyncio
+async def test_run_one_shot_records_firing(store, history, callback):
+    entry = store.create("main", cron="0 9 * * *", prompt="once", one_shot=True)
+    sched = Scheduler(store, callback, history=history)
+    with patch("claude_assistant.scheduler.recurring_jitter", return_value=0), \
+         patch("claude_assistant.scheduler.lognormal_jitter", return_value=0):
+        await sched._run_one_shot("main", entry["id"], "0 9 * * *", "once")
+    entries = history.all()
+    assert len(entries) == 1
+    assert entries[0]["agent"] == "main"
+    assert entries[0]["one_shot"] is True
+    assert entries[0]["schedule_id"] == entry["id"]

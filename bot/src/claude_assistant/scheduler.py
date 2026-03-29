@@ -9,6 +9,7 @@ from datetime import datetime
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+from claude_assistant.firing_history import FiringHistory
 from claude_assistant.schedule_store import ScheduleStore
 
 log = logging.getLogger(__name__)
@@ -58,10 +59,12 @@ class Scheduler:
         store: ScheduleStore,
         callback: ScheduleCallback,
         valid_agents: set[str] | None = None,
+        history: FiringHistory | None = None,
     ) -> None:
         self._scheduler = AsyncIOScheduler()
         self._callback = callback
         self._store = store
+        self._history = history
 
         for agent_name, entries in store.all().items():
             if valid_agents is not None and agent_name not in valid_agents:
@@ -74,10 +77,10 @@ class Scheduler:
         job_id = f"{agent_name}_{entry['id']}"
         if entry.get("one_shot"):
             run_fn = self._run_one_shot
-            args = [agent_name, entry["id"], entry["prompt"]]
+            args = [agent_name, entry["id"], entry["cron"], entry["prompt"]]
         else:
             run_fn = self._run
-            args = [agent_name, entry["prompt"]]
+            args = [agent_name, entry["id"], entry["cron"], entry["prompt"]]
         self._scheduler.add_job(
             run_fn,
             trigger=CronTrigger.from_crontab(entry["cron"]),
@@ -99,7 +102,7 @@ class Scheduler:
         except Exception:
             log.debug("Job %s not found in scheduler", job_id)
 
-    async def _run(self, agent_name: str, prompt: str) -> None:
+    async def _run(self, agent_name: str, entry_id: str, cron: str, prompt: str) -> None:
         jitter = recurring_jitter()
         log.info("Scheduled task for %s — delaying %.0fs", agent_name, jitter)
         await asyncio.sleep(jitter)
@@ -107,8 +110,10 @@ class Scheduler:
         now = datetime.now().strftime("%A, %B %d, %Y at %I:%M %p")
         prefixed = f"[scheduled — current time: {now}] {prompt}"
         await self._callback(agent_name, prefixed)
+        if self._history:
+            self._history.record(agent_name, entry_id, cron, prompt, one_shot=False)
 
-    async def _run_one_shot(self, agent_name: str, entry_id: str, prompt: str) -> None:
+    async def _run_one_shot(self, agent_name: str, entry_id: str, cron: str, prompt: str) -> None:
         async with self._store.lock:
             self._store.delete(agent_name, entry_id)
             job_id = f"{agent_name}_{entry_id}"
@@ -122,6 +127,8 @@ class Scheduler:
         now = datetime.now().strftime("%A, %B %d, %Y at %I:%M %p")
         prefixed = f"[scheduled — current time: {now}] {prompt}"
         await self._callback(agent_name, prefixed)
+        if self._history:
+            self._history.record(agent_name, entry_id, cron, prompt, one_shot=True)
 
     def get_jobs(self) -> list:
         return self._scheduler.get_jobs()
