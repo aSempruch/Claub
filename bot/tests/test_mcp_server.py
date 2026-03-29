@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch, AsyncMock
 
 from apscheduler.triggers.cron import CronTrigger
 
+from claude_assistant.firing_history import FiringHistory
 from claude_assistant.schedule_store import ScheduleStore
 from claude_assistant.scheduler import Scheduler
 from claude_assistant.mcp_server import create_mcp_server, _list_schedules, _create_schedule, _delete_schedule
@@ -21,6 +22,11 @@ from claude_assistant.mcp_server import create_mcp_server, _list_schedules, _cre
 @pytest.fixture
 def store(tmp_path: Path) -> ScheduleStore:
     return ScheduleStore(tmp_path / "schedules.json")
+
+
+@pytest.fixture
+def history(tmp_path: Path) -> FiringHistory:
+    return FiringHistory(tmp_path / "firing_history.json")
 
 
 @pytest.fixture
@@ -163,6 +169,33 @@ async def test_create_schedule_invalid_cron_rejected(
     scheduler.add_job.assert_not_called()
     # Error indicated in return value
     assert "invalid" in result.lower() or "error" in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_create_schedule_rejected_by_density(
+    store: ScheduleStore, scheduler: MagicMock, history: FiringHistory
+) -> None:
+    # Fill up to daily limit
+    store.create("main", cron="0 8 * * *", prompt="a", one_shot=False)
+    store.create("main", cron="0 10 * * *", prompt="b", one_shot=False)
+    store.create("main", cron="0 12 * * *", prompt="c", one_shot=False)
+    store.create("main", cron="0 14 * * *", prompt="d", one_shot=False)
+    store.create("main", cron="0 16 * * *", prompt="e", one_shot=False)
+    # 6th should be rejected
+    result = await _create_schedule(
+        agent="main",
+        cron="0 18 * * *",
+        prompt="too many",
+        one_shot=False,
+        store=store,
+        scheduler=scheduler,
+        history=history,
+    )
+    assert "Error" in result
+    # Store should NOT have a 6th entry
+    assert len(store.list("main")) == 5
+    # Scheduler should NOT be called
+    scheduler.add_job.assert_not_called()
 
 
 @pytest.mark.asyncio

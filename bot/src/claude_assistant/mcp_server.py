@@ -142,6 +142,7 @@ async def _create_schedule(
     store: ScheduleStore,
     scheduler: Scheduler,
     notify: NotifyCallback = None,
+    history: FiringHistory | None = None,
 ) -> str:
     """Validate *cron*, persist the entry, register the APScheduler job.
 
@@ -153,6 +154,12 @@ async def _create_schedule(
         CronTrigger.from_crontab(cron)
     except Exception as exc:
         return f"Error: invalid cron expression {cron!r} — {exc}"
+
+    # Density check
+    if history is not None:
+        density_error = check_schedule_density(store, history, cron, one_shot)
+        if density_error:
+            return density_error
 
     async with store.lock:
         entry = store.create(agent, cron=cron, prompt=prompt, one_shot=one_shot)
@@ -204,6 +211,7 @@ def create_mcp_server(
     store: ScheduleStore,
     scheduler: Scheduler,
     notify: NotifyCallback = None,
+    history: FiringHistory | None = None,
 ) -> fastmcp.FastMCP:
     """Create and return a FastMCP server with schedule management tools.
 
@@ -257,7 +265,7 @@ def create_mcp_server(
         agent = _get_agent(request)
         if not agent:
             return "Error: missing X-Agent-Name header"
-        return await _create_schedule(agent, cron, prompt, one_shot, store, scheduler, notify)
+        return await _create_schedule(agent, cron, prompt, one_shot, store, scheduler, notify, history)
 
     @mcp.tool()
     async def delete_schedule(
