@@ -17,11 +17,14 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Awaitable, Callable
+from datetime import datetime, timedelta
 
 import fastmcp
 from apscheduler.triggers.cron import CronTrigger
+from croniter import croniter
 from starlette.requests import Request
 
+from claude_assistant.firing_history import FiringHistory
 from claude_assistant.schedule_store import ScheduleStore
 from claude_assistant.scheduler import Scheduler
 
@@ -29,6 +32,95 @@ log = logging.getLogger(__name__)
 
 # Optional callback: (agent_name, message) -> Awaitable[None]
 NotifyCallback = Callable[[str, str], Awaitable[None]] | None
+
+# ---------------------------------------------------------------------------
+# Schedule density constants
+# ---------------------------------------------------------------------------
+
+MAX_FIRINGS_PER_DAY = 5
+MAX_FIRINGS_PER_WEEK = 20
+DENSITY_HORIZON_DAYS = 120
+
+
+def _now() -> datetime:
+    """Return current time. Extracted for test patching."""
+    return datetime.now()
+
+
+def check_schedule_density(
+    store: ScheduleStore,
+    history: FiringHistory,
+    new_cron: str,
+    one_shot: bool,
+    max_per_day: int = MAX_FIRINGS_PER_DAY,
+    max_per_week: int = MAX_FIRINGS_PER_WEEK,
+    horizon_days: int = DENSITY_HORIZON_DAYS,
+) -> str | None:
+    """Check if adding a new schedule would exceed daily or weekly firing limits.
+
+    Combines projected future fire times from all existing schedules (plus the
+    proposed new one) with recent firing history. Returns None if OK, or an
+    error string describing which window is overloaded.
+    """
+    now = _now()
+    horizon = now + timedelta(days=horizon_days)
+
+    # Collect all (cron, one_shot) tuples from the store across all agents
+    entries: list[tuple[str, bool]] = []
+    for agent_entries in store.all().values():
+        for e in agent_entries:
+            entries.append((e["cron"], e["one_shot"]))
+    entries.append((new_cron, one_shot))
+
+    # Project fire times
+    fire_times: list[datetime] = []
+    for cron_expr, is_one_shot in entries:
+        it = croniter(cron_expr, now)
+        if is_one_shot:
+            nxt = it.get_next(datetime)
+            if nxt < horizon:
+                fire_times.append(nxt)
+        else:
+            while True:
+                nxt = it.get_next(datetime)
+                if nxt >= horizon:
+                    break
+                fire_times.append(nxt)
+
+    # Add recent firing history
+    for firing in history.recent(days=7):
+        fire_times.append(datetime.fromisoformat(firing["fired_at"]))
+
+    fire_times.sort()
+
+    # Sliding window checks
+    day_delta = timedelta(hours=24)
+    week_delta = timedelta(days=7)
+
+    for i, t in enumerate(fire_times):
+        # Daily check
+        day_count = sum(1 for t2 in fire_times[i:] if t2 < t + day_delta)
+        if day_count > max_per_day:
+            return (
+                f"Error: adding this schedule would cause {day_count} firings "
+                f"within 24h of {t.strftime('%Y-%m-%d %H:%M')} (max {max_per_day}). "
+                f"This count includes schedules from all agents globally — some may "
+                f"belong to other agents you can't control. Consider spreading your "
+                f"schedules further apart or removing existing ones first."
+            )
+
+        # Weekly check
+        week_count = sum(1 for t2 in fire_times[i:] if t2 < t + week_delta)
+        if week_count > max_per_week:
+            return (
+                f"Error: adding this schedule would cause {week_count} firings "
+                f"within 7 days of {t.strftime('%Y-%m-%d %H:%M')} (max {max_per_week}). "
+                f"This count includes schedules from all agents globally — some may "
+                f"belong to other agents you can't control. Consider spreading your "
+                f"schedules further apart or removing existing ones first."
+            )
+
+    return None
 
 
 # ---------------------------------------------------------------------------
