@@ -20,7 +20,12 @@ class FiringHistory:
         self._retention_days = retention_days
         self._data: dict[str, list[dict]] = {"firings": []}
         if self._path.exists():
-            self._data = json.loads(self._path.read_text())
+            try:
+                loaded = json.loads(self._path.read_text())
+                if isinstance(loaded.get("firings"), list):
+                    self._data = loaded
+            except (json.JSONDecodeError, OSError):
+                pass  # start fresh on corrupt file
 
     def record(
         self,

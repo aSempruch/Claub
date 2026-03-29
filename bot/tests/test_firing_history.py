@@ -95,3 +95,17 @@ def test_missing_file_treated_as_empty(tmp_path: Path) -> None:
 
 def test_default_retention_days() -> None:
     assert FIRING_HISTORY_RETENTION_DAYS == 30
+
+
+def test_corrupt_file_treated_as_empty(tmp_path: Path) -> None:
+    path = tmp_path / "firing_history.json"
+    path.write_text("not valid json {{{")
+    history = FiringHistory(path)
+    assert history.all() == []
+
+
+def test_wrong_structure_treated_as_empty(tmp_path: Path) -> None:
+    path = tmp_path / "firing_history.json"
+    path.write_text('{"firings": "not a list"}')
+    history = FiringHistory(path)
+    assert history.all() == []

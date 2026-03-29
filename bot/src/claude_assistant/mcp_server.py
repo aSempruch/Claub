@@ -93,13 +93,21 @@ def check_schedule_density(
 
     fire_times.sort()
 
-    # Sliding window checks
+    # Sliding window checks using two-pointer for O(n)
+    n = len(fire_times)
     day_delta = timedelta(hours=24)
     week_delta = timedelta(days=7)
 
-    for i, t in enumerate(fire_times):
-        # Daily check
-        day_count = sum(1 for t2 in fire_times[i:] if t2 < t + day_delta)
+    day_end = 0
+    week_end = 0
+
+    for i in range(n):
+        t = fire_times[i]
+
+        # Advance day pointer to first element outside [t, t+24h)
+        while day_end < n and fire_times[day_end] < t + day_delta:
+            day_end += 1
+        day_count = day_end - i
         if day_count > max_per_day:
             return (
                 f"Error: adding this schedule would cause {day_count} firings "
@@ -109,8 +117,10 @@ def check_schedule_density(
                 f"schedules further apart or removing existing ones first."
             )
 
-        # Weekly check
-        week_count = sum(1 for t2 in fire_times[i:] if t2 < t + week_delta)
+        # Advance week pointer to first element outside [t, t+7d)
+        while week_end < n and fire_times[week_end] < t + week_delta:
+            week_end += 1
+        week_count = week_end - i
         if week_count > max_per_week:
             return (
                 f"Error: adding this schedule would cause {week_count} firings "
