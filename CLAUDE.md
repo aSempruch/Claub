@@ -139,7 +139,7 @@ Schedule data is persisted to `/claub/data/schedules.json` (machine-managed, not
 - The MCP server runs on `127.0.0.1:9400` (configurable via `CLAUB_MCP_PORT` env var).
 - Agent name is passed via the `X-Agent-Name` HTTP header, resolved from the `${CLAUB_AGENT_NAME}` env var set in each agent's process.
 - Schedule changes trigger a notification in the agent's Discord channel.
-- **Density limits**: Schedule creation is globally rate-limited. At most 5 firings per rolling 24h window and 20 per rolling 7-day window across all agents combined. The check considers both projected future fire times (120-day horizon) and recent firing history.
+- **Density limits**: Schedule creation is globally rate-limited. At most 5 firings per rolling 24h window and 30 per rolling 7-day window across all agents combined. The check considers both projected future fire times (120-day horizon) and recent firing history.
 - **Firing history**: All schedule firings are logged to `/claub/data/firing_history.json` for debugging. Retention is configurable via `CLAUB_SCHEDULE_HISTORY_RETENTION_DAYS` env var (default 30 days).
 
 ### Agent Context — The Three-Level Split

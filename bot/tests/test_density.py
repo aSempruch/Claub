@@ -25,7 +25,7 @@ def history(tmp_path: Path) -> FiringHistory:
 
 def test_constants() -> None:
     assert MAX_FIRINGS_PER_DAY == 5
-    assert MAX_FIRINGS_PER_WEEK == 20
+    assert MAX_FIRINGS_PER_WEEK == 30
 
 
 def test_empty_store_passes(store: ScheduleStore, history: FiringHistory) -> None:
@@ -84,10 +84,11 @@ def test_weekly_limit_without_daily_violation(store: ScheduleStore, history: Fir
     store.create("a2", cron="0 12 * * *", prompt="b", one_shot=False)
     store.create("a3", cron="0 15 * * *", prompt="c", one_shot=False)
     # Adding another daily schedule = 4/day, 28/week — daily OK (<=5), weekly exceeds 20
-    result = check_schedule_density(store, history, "0 18 * * *", one_shot=False)
+    # Uses explicit max_per_week=20 to test weekly-only violation independent of production limit
+    result = check_schedule_density(store, history, "0 18 * * *", one_shot=False, max_per_week=20)
     assert result is not None
     assert "Error" in result
-    assert str(MAX_FIRINGS_PER_WEEK) in result
+    assert str(20) in result
 
 
 def test_one_shots_far_in_future_caught(store: ScheduleStore, history: FiringHistory) -> None:

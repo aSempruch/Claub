@@ -38,7 +38,7 @@ NotifyCallback = Callable[[str, str], Awaitable[None]] | None
 # ---------------------------------------------------------------------------
 
 MAX_FIRINGS_PER_DAY = 5
-MAX_FIRINGS_PER_WEEK = 20
+MAX_FIRINGS_PER_WEEK = 30
 DENSITY_HORIZON_DAYS = 120
 
 
