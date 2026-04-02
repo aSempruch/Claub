@@ -59,56 +59,68 @@ def check_schedule_density(
     """Check if adding a new schedule would exceed daily or weekly firing limits.
 
     Combines projected future fire times from all existing schedules (plus the
-    proposed new one) with recent firing history. Returns None if OK, or an
-    error string describing which window is overloaded.
+    proposed new one) with recent firing history. Only rejects if the *new*
+    schedule's fires actually appear in an overloaded window — pre-existing
+    violations from history don't block unrelated new schedules.
     """
     now = _now()
     horizon = now + timedelta(days=horizon_days)
 
-    # Collect all (cron, one_shot) tuples from the store across all agents
-    entries: list[tuple[str, bool]] = []
-    for agent_entries in store.all().values():
-        for e in agent_entries:
-            entries.append((e["cron"], e["one_shot"]))
-    entries.append((new_cron, one_shot))
-
-    # Project fire times
-    fire_times: list[datetime] = []
-    for cron_expr, is_one_shot in entries:
+    def _project(cron_expr: str, is_one_shot: bool) -> list[datetime]:
+        times: list[datetime] = []
         it = croniter(cron_expr, now)
         if is_one_shot:
             nxt = it.get_next(datetime)
             if nxt < horizon:
-                fire_times.append(nxt)
+                times.append(nxt)
         else:
             while True:
                 nxt = it.get_next(datetime)
                 if nxt >= horizon:
                     break
-                fire_times.append(nxt)
+                times.append(nxt)
+        return times
 
-    # Add recent firing history
+    # Project existing schedules + history (tagged False)
+    existing_fires: list[datetime] = []
+    for agent_entries in store.all().values():
+        for e in agent_entries:
+            existing_fires.extend(_project(e["cron"], e["one_shot"]))
     for firing in history.recent(days=7):
-        fire_times.append(datetime.fromisoformat(firing["fired_at"]))
+        existing_fires.append(datetime.fromisoformat(firing["fired_at"]))
 
-    fire_times.sort()
+    # Project new schedule (tagged True)
+    new_fires = _project(new_cron, one_shot)
 
-    # Sliding window checks using two-pointer for O(n)
+    # Merge with origin tags and sort by time
+    tagged = [(t, False) for t in existing_fires] + [(t, True) for t in new_fires]
+    tagged.sort(key=lambda x: x[0])
+
+    fire_times = [t for t, _ in tagged]
+    is_new = [flag for _, flag in tagged]
     n = len(fire_times)
+
+    # Sliding window checks using two-pointer for O(n).
+    # Only flag violations in windows that contain at least one new fire,
+    # so pre-existing over-limit windows don't block unrelated new schedules.
     day_delta = timedelta(hours=24)
     week_delta = timedelta(days=7)
 
     day_end = 0
     week_end = 0
+    new_in_day = 0
+    new_in_week = 0
 
     for i in range(n):
         t = fire_times[i]
 
         # Advance day pointer to first element outside [t, t+24h)
         while day_end < n and fire_times[day_end] < t + day_delta:
+            if is_new[day_end]:
+                new_in_day += 1
             day_end += 1
         day_count = day_end - i
-        if day_count > max_per_day:
+        if day_count > max_per_day and new_in_day > 0:
             return (
                 f"Error: adding this schedule would cause {day_count} firings "
                 f"within 24h of {t.strftime('%Y-%m-%d %H:%M')} (max {max_per_day}). "
@@ -119,9 +131,11 @@ def check_schedule_density(
 
         # Advance week pointer to first element outside [t, t+7d)
         while week_end < n and fire_times[week_end] < t + week_delta:
+            if is_new[week_end]:
+                new_in_week += 1
             week_end += 1
         week_count = week_end - i
-        if week_count > max_per_week:
+        if week_count > max_per_week and new_in_week > 0:
             return (
                 f"Error: adding this schedule would cause {week_count} firings "
                 f"within 7 days of {t.strftime('%Y-%m-%d %H:%M')} (max {max_per_week}). "
@@ -129,6 +143,11 @@ def check_schedule_density(
                 f"belong to other agents you can't control. Consider spreading your "
                 f"schedules further apart or removing existing ones first."
             )
+
+        # Element i leaves both windows as i advances to next iteration
+        if is_new[i]:
+            new_in_day -= 1
+            new_in_week -= 1
 
     return None
 

@@ -165,3 +165,56 @@ def test_one_shot_chaining_detected(store: ScheduleStore, history: FiringHistory
     result = check_schedule_density(store, history, "0 9 * * *", one_shot=True)
     assert result is not None
     assert "Error" in result
+
+
+def test_history_overload_does_not_block_unrelated_schedule(
+    store: ScheduleStore, history: FiringHistory
+) -> None:
+    """Past-anchored windows exceeding limits should not reject new schedules
+    that don't fire in those windows."""
+    # Use real now for history timestamps (since FiringHistory.recent() uses
+    # datetime.now(), not the patched _now) but patch _now to the same value
+    # so projections align.
+    now = datetime.now()
+    with patch("claude_assistant.mcp_server._now", return_value=now):
+        # 6 firings 2 days ago (exceeds daily limit of 5 in that past window)
+        past = now - timedelta(days=2)
+        for i in range(6):
+            ts = past.replace(hour=8 + i, minute=0, second=0, microsecond=0)
+            history._data["firings"].append({
+                "agent": "main",
+                "schedule_id": f"id{i}",
+                "cron": f"0 {8 + i} * * *",
+                "prompt": f"task {i}",
+                "one_shot": True,
+                "fired_at": ts.isoformat(),
+            })
+        # New one-shot 90 days out — no overlap with the past window
+        result = check_schedule_density(store, history, "0 9 1 7 *", one_shot=True)
+        assert result is None
+
+
+def test_existing_weekly_overload_allows_unrelated_one_shot(
+    store: ScheduleStore, history: FiringHistory
+) -> None:
+    """Existing recurring schedules + history exceeding weekly limit in a
+    past-anchored window should not block a one-shot in a different week."""
+    now = datetime.now()
+    with patch("claude_assistant.mcp_server._now", return_value=now):
+        # Simulate a busy past week: 3 firings/day for 7 days = 21 (exceeds 20)
+        for day in range(1, 8):
+            for hour in [8, 12, 17]:
+                ts = (now - timedelta(days=day)).replace(
+                    hour=hour, minute=0, second=0, microsecond=0
+                )
+                history._data["firings"].append({
+                    "agent": "journalist",
+                    "schedule_id": f"id_{day}_{hour}",
+                    "cron": f"0 {hour} * * *",
+                    "prompt": "news",
+                    "one_shot": True,
+                    "fired_at": ts.isoformat(),
+                })
+        # New one-shot 60 days out — well outside the overloaded historical window
+        result = check_schedule_density(store, history, "0 9 1 6 *", one_shot=True)
+        assert result is None
