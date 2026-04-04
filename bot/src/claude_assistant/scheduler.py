@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import random
+from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 
@@ -13,6 +15,59 @@ from claude_assistant.firing_history import FiringHistory
 from claude_assistant.schedule_store import ScheduleStore
 
 log = logging.getLogger(__name__)
+
+# --- Human-like skip model for recurring schedules ---
+# Target: ~30% overall skip rate, but distributed like real human habits.
+#
+# Three factors combine:
+# 1. Day-of-week weight: weekends and Mondays are lazier
+# 2. Streak momentum: consecutive fires lower skip chance, consecutive skips raise it
+# 3. Beta-distributed randomness: heavier tails than uniform, mimics real variability
+#
+# The base skip probability is scaled by day-of-week, then shifted by streak,
+# then a beta-distributed roll determines the outcome.
+
+# Day-of-week multipliers on skip probability (Mon=0 .. Sun=6)
+# Midweek is most disciplined; weekends and Monday are worst
+_DAY_SKIP_WEIGHT = {
+    0: 1.35,  # Monday — rough start
+    1: 0.80,  # Tuesday — in the groove
+    2: 0.75,  # Wednesday — peak discipline
+    3: 0.85,  # Thursday — slight fade
+    4: 1.10,  # Friday — winding down
+    5: 1.40,  # Saturday — weekend
+    6: 1.30,  # Sunday — weekend but some prep energy
+}
+
+_BASE_SKIP_PROB = 0.27  # tuned so weighted average across days ≈ 0.30
+_STREAK_SHIFT = 0.03    # per consecutive outcome, shift probability this much
+_MAX_STREAK_EFFECT = 0.12  # cap the streak shift
+_BETA_ALPHA = 2.0       # beta distribution shape — moderate left skew
+_BETA_BETA = 5.0        # gives a mean around 0.29, heavier left tail
+
+
+def _should_skip_human(day_of_week: int, streak: int) -> bool:
+    """Decide whether to skip a recurring schedule firing.
+
+    Args:
+        day_of_week: 0=Monday .. 6=Sunday
+        streak: positive = consecutive fires, negative = consecutive skips
+    """
+    # Base probability adjusted for day of week
+    p = _BASE_SKIP_PROB * _DAY_SKIP_WEIGHT.get(day_of_week, 1.0)
+
+    # Streak momentum: firing streaks reduce skip chance, skip streaks increase it
+    shift = min(abs(streak), int(_MAX_STREAK_EFFECT / _STREAK_SHIFT)) * _STREAK_SHIFT
+    if streak > 0:
+        p -= shift  # been consistent → less likely to skip
+    elif streak < 0:
+        p += shift  # been skipping → more likely to keep skipping
+
+    p = max(0.05, min(0.60, p))  # clamp to reasonable range
+
+    # Beta-distributed roll — heavier tails than uniform
+    roll = random.betavariate(_BETA_ALPHA, _BETA_BETA)
+    return roll < p
 
 JITTER_MEDIAN_LOW = 480    # 8 minutes in seconds
 JITTER_MEDIAN_HIGH = 720   # 12 minutes in seconds

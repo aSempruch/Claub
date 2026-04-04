@@ -92,6 +92,7 @@ scripts/                          # Legacy service management (launchd, pre-Dock
       pyproject.toml
       server.py
   workspaces/                     # Runtime scratch dirs per agent (auto-created)
+    {name}/.claude-skills/        # Symlink → .claude/skills/ (agent-authored skills)
   data/                           # sessions.json — session ID persistence
                                   # schedules.json — dynamic schedule persistence
 ```
@@ -328,6 +329,7 @@ docker exec -it claude-claub-1 bash -c 'cd /claub/workspaces/main && claude --ag
 - **Entrypoint config copy**: `entrypoint.sh` copies settings.json and CLAUDE.md from `/claub/config/` into `~/.claude/` on every container start. No symlinks — plain copies.
 - **Separated instance from source**: Bot code is baked into the image; user config and runtime state are bind-mounted from the host into `/claub/` (configurable via `CLAUB_HOME` env var).
 - **Embedded MCP server for schedules**: FastMCP HTTP server runs inside the bot process on localhost. Agents manage their own cron schedules via MCP tools. Changes take effect immediately — no file polling or restart needed. One-shot schedules are deleted from persistence before execution to prevent duplicate firing on crash recovery.
+- **Agent-authored skills via symlink**: Each workspace gets a real `.claude-skills/` dir and `.claude/skills/ → ../.claude-skills` symlink. Agents write to `.claude-skills/` (not blocked by Claude Code — Claude Code resolves symlinks, so writing through a symlink *to* `.claude/` is blocked). Claude Code discovers skills by reading `.claude/skills/` which symlinks to the real dir. This lets agents create their own skills without granting access to `.claude/` (which would let them modify `settings.json` and escalate permissions). The symlink is created by `_ensure_skills_symlink()` in `discord_bot.py` during `_start_agent`, which also migrates any existing `.claude/skills/` contents.
 
 ### Agent Memory System
 

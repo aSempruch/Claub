@@ -22,6 +22,28 @@ from claude_assistant.session import SessionStore
 log = logging.getLogger(__name__)
 
 
+def _ensure_skills_symlink(workspace: Path) -> None:
+    """Set up agent skill authoring: real dir at .claude-skills/, symlink at .claude/skills/.
+
+    Agents write to .claude-skills/ (not blocked by Claude Code).
+    Claude Code discovers skills by reading .claude/skills/ which symlinks there.
+    """
+    (workspace / ".claude-skills").mkdir(parents=True, exist_ok=True)
+    claude_dir = workspace / ".claude"
+    claude_dir.mkdir(parents=True, exist_ok=True)
+    skills_link = claude_dir / "skills"
+    if skills_link.is_dir() and not skills_link.is_symlink():
+        # Migrate existing real .claude/skills/ contents
+        import shutil
+        for item in skills_link.iterdir():
+            dest = workspace / ".claude-skills" / item.name
+            if not dest.exists():
+                shutil.move(str(item), str(dest))
+        skills_link.rmdir()
+    if not skills_link.is_symlink():
+        skills_link.symlink_to("../.claude-skills")
+
+
 class AssistantBot:
     def __init__(
         self,
@@ -90,7 +112,9 @@ class AssistantBot:
     def _disallowed_skills_for(self, name: str) -> list[str]:
         """Return skills this agent is NOT allowed to use."""
         agent_config = self.config.agents.get(name)
-        allowed = set(agent_config.allowed_skills) if agent_config else set()
+        allowed = set(self.config.allowed_skills)
+        if agent_config:
+            allowed |= set(agent_config.allowed_skills)
         return [s for s in self.all_skills if s not in allowed]
 
     def _load_agent_definition(self, name: str) -> dict[str, str] | None:
@@ -110,6 +134,7 @@ class AssistantBot:
         """Start (or restart) an agent process. Returns the new process."""
         workspace = self.workspaces_dir / name
         workspace.mkdir(parents=True, exist_ok=True)
+        _ensure_skills_symlink(workspace)
         agent_config = self.config.agents.get(name)
         process = AgentProcess(
             workspace=workspace,

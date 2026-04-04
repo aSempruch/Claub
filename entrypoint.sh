@@ -14,6 +14,7 @@ if [ -f "/claub/config/CLAUDE.md" ]; then
     cp /claub/config/CLAUDE.md ~/.claude/CLAUDE.md
 fi
 if [ -d "/claub/config/skills" ]; then
+    rm -rf ~/.claude/skills
     cp -r /claub/config/skills ~/.claude/skills
 fi
 

@@ -24,6 +24,7 @@ class AssistantConfig:
     agents: dict[str, AgentConfig] = field(default_factory=dict)
     allowed_user_ids: set[str] = field(default_factory=set)
     model: str | None = None
+    allowed_skills: list[str] = field(default_factory=list)
 
 
 def load_config(path: Path) -> AssistantConfig:
@@ -48,8 +49,9 @@ def load_config(path: Path) -> AssistantConfig:
 
     allowed_user_ids = set(raw.get("allowed_user_ids") or [])
     model = raw.get("model")
+    allowed_skills = raw.get("allowed_skills") or []
 
-    return AssistantConfig(agents=agents, allowed_user_ids=allowed_user_ids, model=model)
+    return AssistantConfig(agents=agents, allowed_user_ids=allowed_user_ids, model=model, allowed_skills=allowed_skills)
 
 
 def parse_agent_file(path: Path) -> dict[str, str]:
