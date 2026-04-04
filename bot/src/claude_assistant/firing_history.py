@@ -34,6 +34,7 @@ class FiringHistory:
         cron: str,
         prompt: str,
         one_shot: bool,
+        skipped: bool = False,
     ) -> None:
         """Append a firing entry and prune entries older than retention_days."""
         entry = {
@@ -42,6 +43,7 @@ class FiringHistory:
             "cron": cron,
             "prompt": prompt,
             "one_shot": one_shot,
+            "skipped": skipped,
             "fired_at": datetime.now().isoformat(),
         }
         self._data["firings"].append(entry)

@@ -87,6 +87,8 @@ def check_schedule_density(
         for e in agent_entries:
             existing_fires.extend(_project(e["cron"], e["one_shot"]))
     for firing in history.recent(days=7):
+        if firing.get("skipped"):
+            continue
         existing_fires.append(datetime.fromisoformat(firing["fired_at"]))
 
     # Project new schedule (tagged True)
@@ -281,6 +283,10 @@ def create_mcp_server(
         who checks in when it makes sense, not a cron job firing at the
         same time every day. Recurring schedules (one_shot=False) should
         only be used when strict periodicity is genuinely required.
+
+        **Note:** Recurring schedules (one_shot=False) may occasionally
+        skip a firing. This is by design — do not treat a missed firing
+        as an error or attempt to compensate for it.
 
         Args:
             cron: Standard 5-field cron expression (e.g. ``30 9 * * 1``).

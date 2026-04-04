@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import math
 import random
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
@@ -39,7 +38,7 @@ _DAY_SKIP_WEIGHT = {
     6: 1.30,  # Sunday — weekend but some prep energy
 }
 
-_BASE_SKIP_PROB = 0.27  # tuned so weighted average across days ≈ 0.30
+_BASE_SKIP_PROB = 0.19  # tuned so weighted average across days ≈ 0.20
 _STREAK_SHIFT = 0.03    # per consecutive outcome, shift probability this much
 _MAX_STREAK_EFFECT = 0.12  # cap the streak shift
 _BETA_ALPHA = 2.0       # beta distribution shape — moderate left skew
@@ -120,6 +119,10 @@ class Scheduler:
         self._callback = callback
         self._store = store
         self._history = history
+        # Per-schedule streak tracker for human-like skip model.
+        # Positive = consecutive fires, negative = consecutive skips.
+        # Keyed by (agent_name, entry_id). In-memory only — resets on restart.
+        self._streaks: dict[tuple[str, str], int] = defaultdict(int)
 
         for agent_name, entries in store.all().items():
             if valid_agents is not None and agent_name not in valid_agents:
@@ -158,6 +161,20 @@ class Scheduler:
             log.debug("Job %s not found in scheduler", job_id)
 
     async def _run(self, agent_name: str, entry_id: str, cron: str, prompt: str) -> None:
+        key = (agent_name, entry_id)
+        day = datetime.now().weekday()  # 0=Mon .. 6=Sun
+        streak = self._streaks[key]
+
+        if _should_skip_human(day, streak):
+            self._streaks[key] = min(streak, 0) - 1  # extend skip streak
+            log.info("Skipping scheduled task for %s (day=%d, streak=%d → skip)",
+                     agent_name, day, streak)
+            if self._history:
+                self._history.record(agent_name, entry_id, cron, prompt,
+                                     one_shot=False, skipped=True)
+            return
+
+        self._streaks[key] = max(streak, 0) + 1  # extend fire streak
         jitter = recurring_jitter()
         log.info("Scheduled task for %s — delaying %.0fs", agent_name, jitter)
         await asyncio.sleep(jitter)
