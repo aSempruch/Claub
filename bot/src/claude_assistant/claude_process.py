@@ -123,6 +123,9 @@ class AgentProcess:
         env.pop("DISCORD_BOT_TOKEN", None)
         if self.agent_name:
             env["CLAUB_AGENT_NAME"] = self.agent_name
+        # Neutralize git's interactive editor so `rebase -i`, `commit` without
+        # -m, etc. don't hang waiting on stdin.
+        env["GIT_EDITOR"] = "true"
         return env
 
     async def start(self, session_id: str | None = None) -> None:
