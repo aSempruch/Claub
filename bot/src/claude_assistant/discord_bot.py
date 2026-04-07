@@ -22,26 +22,31 @@ from claude_assistant.session import SessionStore
 log = logging.getLogger(__name__)
 
 
-def _ensure_skills_symlink(workspace: Path) -> None:
-    """Set up agent skill authoring: real dir at .claude-skills/, symlink at .claude/skills/.
+def _ensure_authoring_symlink(workspace: Path, name: str) -> None:
+    """Set up agent self-authoring: real dir at .claude-{name}/, symlink at .claude/{name}/.
 
-    Agents write to .claude-skills/ (not blocked by Claude Code).
-    Claude Code discovers skills by reading .claude/skills/ which symlinks there.
+    Agents write to .claude-{name}/ (not blocked by Claude Code, which would block
+    writes through a symlink targeting .claude/). Claude Code still discovers content
+    by reading .claude/{name}/ which symlinks to the real dir.
+
+    Used for both skills and agents (subagents) so agents can author their own without
+    being granted write access to .claude/ itself (which would let them edit settings.json).
     """
-    (workspace / ".claude-skills").mkdir(parents=True, exist_ok=True)
+    real_dir = workspace / f".claude-{name}"
+    real_dir.mkdir(parents=True, exist_ok=True)
     claude_dir = workspace / ".claude"
     claude_dir.mkdir(parents=True, exist_ok=True)
-    skills_link = claude_dir / "skills"
-    if skills_link.is_dir() and not skills_link.is_symlink():
-        # Migrate existing real .claude/skills/ contents
+    link = claude_dir / name
+    if link.is_dir() and not link.is_symlink():
+        # Migrate existing real .claude/{name}/ contents
         import shutil
-        for item in skills_link.iterdir():
-            dest = workspace / ".claude-skills" / item.name
+        for item in link.iterdir():
+            dest = real_dir / item.name
             if not dest.exists():
                 shutil.move(str(item), str(dest))
-        skills_link.rmdir()
-    if not skills_link.is_symlink():
-        skills_link.symlink_to("../.claude-skills")
+        link.rmdir()
+    if not link.is_symlink():
+        link.symlink_to(f"../.claude-{name}")
 
 
 class AssistantBot:
@@ -134,7 +139,8 @@ class AssistantBot:
         """Start (or restart) an agent process. Returns the new process."""
         workspace = self.workspaces_dir / name
         workspace.mkdir(parents=True, exist_ok=True)
-        _ensure_skills_symlink(workspace)
+        _ensure_authoring_symlink(workspace, "skills")
+        _ensure_authoring_symlink(workspace, "agents")
         agent_config = self.config.agents.get(name)
         process = AgentProcess(
             workspace=workspace,
