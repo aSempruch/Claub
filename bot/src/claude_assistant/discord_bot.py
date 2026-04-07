@@ -234,8 +234,12 @@ class AssistantBot:
         channel_id = str(message.channel.id)
         content = message.content.strip()
 
-        if content.startswith("/clear"):
-            await self._handle_reset(message, content)
+        if content == "/clear":
+            await self._handle_reset(message)
+            return
+
+        if content == "/stop":
+            await self._handle_stop(message)
             return
 
         agent_name = self.router.route(channel_id)
@@ -323,19 +327,9 @@ class AssistantBot:
 
     # --- Commands ---
 
-    async def _handle_reset(self, message: discord.Message, content: str) -> None:
-        parts = content.split()
-        channel_id = str(message.channel.id)
-
-        if len(parts) >= 2:
-            agent_name = parts[1]
-        else:
-            agent_name = self.router.route(channel_id)
-            if agent_name is None:
-                return
-
-        if agent_name not in self.config.agents:
-            await message.channel.send(f"Unknown agent: {agent_name}")
+    async def _handle_reset(self, message: discord.Message) -> None:
+        agent_name = self.router.route(str(message.channel.id))
+        if agent_name is None:
             return
 
         process = self._processes.get(agent_name)
@@ -346,6 +340,19 @@ class AssistantBot:
         self._reaped.discard(agent_name)
         self.sessions.delete(agent_name)
         await message.channel.send(f"Agent `{agent_name}` reset.")
+
+    async def _handle_stop(self, message: discord.Message) -> None:
+        agent_name = self.router.route(str(message.channel.id))
+        if agent_name is None:
+            return
+
+        process = self._processes.get(agent_name)
+        if process:
+            await process.stop()
+            del self._processes[agent_name]
+        self._last_activity.pop(agent_name, None)
+        self._reaped.discard(agent_name)
+        await message.channel.send(f"Agent `{agent_name}` stopped.")
 
     # --- Webhook sending ---
 
