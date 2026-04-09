@@ -8,6 +8,7 @@ from claude_assistant.firing_history import FiringHistory
 from claude_assistant.mcp_server import (
     MAX_FIRINGS_PER_DAY,
     MAX_FIRINGS_PER_WEEK,
+    check_nighttime_hours,
     check_schedule_density,
 )
 from claude_assistant.schedule_store import ScheduleStore
@@ -24,8 +25,9 @@ def history(tmp_path: Path) -> FiringHistory:
 
 
 def test_constants() -> None:
-    assert MAX_FIRINGS_PER_DAY == 5
-    assert MAX_FIRINGS_PER_WEEK == 30
+    assert MAX_FIRINGS_PER_DAY == 8
+    assert MAX_FIRINGS_PER_WEEK == 40
+    assert MAX_FIRINGS_PER_DAY < MAX_FIRINGS_PER_WEEK
 
 
 def test_empty_store_passes(store: ScheduleStore, history: FiringHistory) -> None:
@@ -51,11 +53,11 @@ def test_daily_limit_exceeded(store: ScheduleStore, history: FiringHistory) -> N
     store.create("main", cron="0 12 * * *", prompt="c", one_shot=False)
     store.create("main", cron="0 14 * * *", prompt="d", one_shot=False)
     store.create("main", cron="0 16 * * *", prompt="e", one_shot=False)
-    # Adding a 6th exceeds the daily limit
-    result = check_schedule_density(store, history, "0 18 * * *", one_shot=False)
+    # Adding a 6th exceeds the daily limit (using max_per_day=5 for easier testing)
+    result = check_schedule_density(store, history, "0 18 * * *", one_shot=False, max_per_day=5)
     assert result is not None
     assert "Error" in result
-    assert str(MAX_FIRINGS_PER_DAY) in result
+    assert "5" in result
 
 
 def test_weekly_limit_exceeded(store: ScheduleStore, history: FiringHistory) -> None:
@@ -72,10 +74,9 @@ def test_weekly_limit_exceeded(store: ScheduleStore, history: FiringHistory) -> 
     # while exceeding weekly:
     # Mon-Fri: 4/day = 20/week at limit. Add one more on any day = 21.
     store.create("main", cron="0 18 * * 1", prompt="e", one_shot=False)
-    result = check_schedule_density(store, history, "0 20 * * 1", one_shot=False)
+    result = check_schedule_density(store, history, "0 20 * * 1", one_shot=False, max_per_day=5)
     # Mon now has 6 firings — daily limit hit first
-    # Let's redesign: use 3/day across all 7 days = 21/week, then add one more
-    assert result is not None  # Will hit daily limit on Monday
+    assert result is not None
 
 
 def test_weekly_limit_without_daily_violation(store: ScheduleStore, history: FiringHistory) -> None:
@@ -102,8 +103,8 @@ def test_one_shots_far_in_future_caught(store: ScheduleStore, history: FiringHis
         store.create("main", cron="0 11 15 6 *", prompt="c", one_shot=True)
         store.create("main", cron="0 12 15 6 *", prompt="d", one_shot=True)
         store.create("main", cron="0 13 15 6 *", prompt="e", one_shot=True)
-        # 6th one-shot on the same day should be rejected
-        result = check_schedule_density(store, history, "0 14 15 6 *", one_shot=True)
+        # 6th one-shot on the same day should be rejected (using max_per_day=5)
+        result = check_schedule_density(store, history, "0 14 15 6 *", one_shot=True, max_per_day=5)
         assert result is not None
         assert "Error" in result
 
@@ -115,7 +116,7 @@ def test_firing_history_tips_over_daily(store: ScheduleStore, history: FiringHis
     # 1 existing schedule firing today
     # Use a cron that fires every day — one of those days will have 4 history + 1 existing + 1 new = 6
     store.create("main", cron="0 14 * * *", prompt="existing", one_shot=False)
-    result = check_schedule_density(store, history, "0 16 * * *", one_shot=False)
+    result = check_schedule_density(store, history, "0 16 * * *", one_shot=False, max_per_day=5)
     assert result is not None
     assert "Error" in result
 
@@ -131,7 +132,7 @@ def test_error_message_mentions_other_agents(store: ScheduleStore, history: Firi
     store.create("main", cron="0 12 * * *", prompt="c", one_shot=False)
     store.create("main", cron="0 14 * * *", prompt="d", one_shot=False)
     store.create("main", cron="0 16 * * *", prompt="e", one_shot=False)
-    result = check_schedule_density(store, history, "0 18 * * *", one_shot=False)
+    result = check_schedule_density(store, history, "0 18 * * *", one_shot=False, max_per_day=5)
     assert result is not None
     assert "other agents" in result.lower()
 
@@ -144,7 +145,7 @@ def test_multi_agent_daily_limit(store: ScheduleStore, history: FiringHistory) -
     store.create("journalist", cron="0 14 * * *", prompt="d", one_shot=False)
     store.create("journalist", cron="0 16 * * *", prompt="e", one_shot=False)
     # Journalist tries to add a 3rd — globally that's 6/day
-    result = check_schedule_density(store, history, "0 18 * * *", one_shot=False)
+    result = check_schedule_density(store, history, "0 18 * * *", one_shot=False, max_per_day=5)
     assert result is not None
     assert "Error" in result
 
@@ -162,8 +163,8 @@ def test_one_shot_chaining_detected(store: ScheduleStore, history: FiringHistory
     # but history shows 5 recent firings. The 6th attempt should be rejected.
     for i in range(5):
         history.record("main", f"id{i}", "0 9 * * *", f"chain {i}", True)
-    # Agent tries to schedule yet another one-shot
-    result = check_schedule_density(store, history, "0 9 * * *", one_shot=True)
+    # Agent tries to schedule yet another one-shot (using max_per_day=5)
+    result = check_schedule_density(store, history, "0 9 * * *", one_shot=True, max_per_day=5)
     assert result is not None
     assert "Error" in result
 
@@ -219,3 +220,45 @@ def test_existing_weekly_overload_allows_unrelated_one_shot(
         # New one-shot 60 days out — well outside the overloaded historical window
         result = check_schedule_density(store, history, "0 9 1 6 *", one_shot=True)
         assert result is None
+
+
+# --- Nighttime hour validation ---
+
+
+def test_nighttime_rejects_2am() -> None:
+    assert check_nighttime_hours("0 2 * * *") is not None
+
+
+def test_nighttime_rejects_3am() -> None:
+    assert check_nighttime_hours("30 3 * * *") is not None
+
+
+def test_nighttime_rejects_5am() -> None:
+    assert check_nighttime_hours("0 5 * * *") is not None
+
+
+def test_nighttime_allows_1am() -> None:
+    assert check_nighttime_hours("0 1 * * *") is None
+
+
+def test_nighttime_allows_6am() -> None:
+    assert check_nighttime_hours("0 6 * * *") is None
+
+
+def test_nighttime_allows_daytime() -> None:
+    assert check_nighttime_hours("0 9 * * *") is None
+    assert check_nighttime_hours("0 12 * * *") is None
+    assert check_nighttime_hours("0 23 * * *") is None
+
+
+def test_nighttime_rejects_star_hour() -> None:
+    """A wildcard hour hits 2-5 AM, should be rejected."""
+    assert check_nighttime_hours("0 * * * *") is not None
+
+
+def test_nighttime_rejects_range_spanning_night() -> None:
+    assert check_nighttime_hours("0 0-6 * * *") is not None
+
+
+def test_nighttime_allows_range_outside_night() -> None:
+    assert check_nighttime_hours("0 7-23 * * *") is None

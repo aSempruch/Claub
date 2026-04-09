@@ -37,14 +37,39 @@ NotifyCallback = Callable[[str, str], Awaitable[None]] | None
 # Schedule density constants
 # ---------------------------------------------------------------------------
 
-MAX_FIRINGS_PER_DAY = 5
-MAX_FIRINGS_PER_WEEK = 30
+MAX_FIRINGS_PER_DAY = 8
+MAX_FIRINGS_PER_WEEK = 40
 DENSITY_HORIZON_DAYS = 120
 
 
 def _now() -> datetime:
     """Return current time. Extracted for test patching."""
     return datetime.now()
+
+
+def check_nighttime_hours(cron: str) -> str | None:
+    """Reject cron expressions that fire between 1 AM and 6 AM (exclusive).
+
+    Exactly 1:00 AM and 6:00 AM are allowed; hours 2-5 are blocked.
+    """
+    trigger = CronTrigger.from_crontab(cron)
+    # Project firings over a full week to catch all hour patterns
+    from datetime import timezone
+
+    start = datetime(2026, 1, 5, 0, 0, tzinfo=timezone.utc)
+    end = start + timedelta(days=7)
+    t = start
+    while t < end:
+        fire = trigger.get_next_fire_time(None, t)
+        if fire is None or fire >= end:
+            break
+        if 2 <= fire.hour <= 5:
+            return (
+                f"Error: schedule would fire at {fire.strftime('%H:%M')} — "
+                f"schedules cannot fire between 1 AM and 6 AM (exclusive)"
+            )
+        t = fire + timedelta(seconds=1)
+    return None
 
 
 def check_schedule_density(
@@ -185,6 +210,11 @@ async def _create_schedule(
         CronTrigger.from_crontab(cron)
     except Exception as exc:
         return f"Error: invalid cron expression {cron!r} — {exc}"
+
+    # Reject schedules that fire between 1 AM and 6 AM (exclusive)
+    nighttime_error = check_nighttime_hours(cron)
+    if nighttime_error:
+        return nighttime_error
 
     # Density check
     if history is not None:

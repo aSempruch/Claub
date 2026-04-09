@@ -175,22 +175,23 @@ async def test_create_schedule_invalid_cron_rejected(
 async def test_create_schedule_rejected_by_density(
     store: ScheduleStore, scheduler: MagicMock, history: FiringHistory
 ) -> None:
-    # Fill up to daily limit
+    # Fill up to daily limit (using patched limit of 5 for easier testing)
     store.create("main", cron="0 8 * * *", prompt="a", one_shot=False)
     store.create("main", cron="0 10 * * *", prompt="b", one_shot=False)
     store.create("main", cron="0 12 * * *", prompt="c", one_shot=False)
     store.create("main", cron="0 14 * * *", prompt="d", one_shot=False)
     store.create("main", cron="0 16 * * *", prompt="e", one_shot=False)
     # 6th should be rejected
-    result = await _create_schedule(
-        agent="main",
-        cron="0 18 * * *",
-        prompt="too many",
-        one_shot=False,
-        store=store,
-        scheduler=scheduler,
-        history=history,
-    )
+    with patch("claude_assistant.mcp_server.MAX_FIRINGS_PER_DAY", 5):
+        result = await _create_schedule(
+            agent="main",
+            cron="0 18 * * *",
+            prompt="too many",
+            one_shot=False,
+            store=store,
+            scheduler=scheduler,
+            history=history,
+        )
     assert "Error" in result
     # Store should NOT have a 6th entry
     assert len(store.list("main")) == 5
