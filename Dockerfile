@@ -24,6 +24,9 @@ RUN uv sync --no-dev --frozen
 ENV CLAUB_HOME=/claub
 RUN mkdir -p /claub/config /claub/data /claub/workspaces /claub/mcps
 
+# Bake repo MCP servers into image
+COPY mcps/ /app/mcps/
+
 # Lock down git: neutralize hooks and block network protocols so agents can use
 # git for local versioning without code-execution or network escape hatches.
 # This file is root-owned; agents run as root inside the container but cannot

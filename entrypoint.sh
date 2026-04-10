@@ -22,8 +22,15 @@ fi
 mkdir -p /claub/workspaces
 
 
-# Install dependencies for mounted MCP servers
-for dir in /claub/mcps/*/; do
+# Install dependencies for baked-in MCP servers
+for dir in /app/mcps/*/; do
+    if [ -f "$dir/pyproject.toml" ]; then
+        uv sync --directory "$dir" 2>&1 | tail -1
+    fi
+done
+
+# Install dependencies for instance MCP servers (user-provided)
+for dir in "$CLAUB_HOME/mcps"/*/; do
     if [ -f "$dir/pyproject.toml" ]; then
         uv sync --directory "$dir" 2>&1 | tail -1
     fi
