@@ -18,7 +18,7 @@ from pathlib import Path
 from xml.etree import ElementTree
 
 import httpx
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 
 log = logging.getLogger(__name__)
 
