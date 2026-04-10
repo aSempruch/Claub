@@ -91,6 +91,56 @@ def test_discover_skills_multiple(tmp_path: Path) -> None:
     assert names == ["alpha", "beta"]
 
 
+def test_effort_global_default(tmp_path: Path) -> None:
+    cfg_file = tmp_path / "agents.yaml"
+    cfg_file.write_text(
+        "effort: high\n"
+        "agents:\n"
+        "  main:\n"
+        '    channel_id: "123"\n'
+    )
+    config = load_config(cfg_file)
+    assert config.effort == "high"
+    assert config.agents["main"].effort is None
+
+
+def test_effort_per_agent(tmp_path: Path) -> None:
+    cfg_file = tmp_path / "agents.yaml"
+    cfg_file.write_text(
+        "agents:\n"
+        "  main:\n"
+        '    channel_id: "123"\n'
+        "    effort: max\n"
+    )
+    config = load_config(cfg_file)
+    assert config.effort is None
+    assert config.agents["main"].effort == "max"
+
+
+def test_effort_invalid_value(tmp_path: Path) -> None:
+    cfg_file = tmp_path / "agents.yaml"
+    cfg_file.write_text(
+        "effort: turbo\n"
+        "agents:\n"
+        "  main:\n"
+        '    channel_id: "123"\n'
+    )
+    with pytest.raises(ValueError, match="effort must be one of"):
+        load_config(cfg_file)
+
+
+def test_effort_invalid_per_agent(tmp_path: Path) -> None:
+    cfg_file = tmp_path / "agents.yaml"
+    cfg_file.write_text(
+        "agents:\n"
+        "  main:\n"
+        '    channel_id: "123"\n'
+        "    effort: ultra\n"
+    )
+    with pytest.raises(ValueError, match="agents.main"):
+        load_config(cfg_file)
+
+
 def test_allowed_skills_config(tmp_path: Path) -> None:
     cfg_file = tmp_path / "agents.yaml"
     cfg_file.write_text(

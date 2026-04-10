@@ -142,6 +142,7 @@ class AssistantBot:
         _ensure_authoring_symlink(workspace, "skills")
         _ensure_authoring_symlink(workspace, "agents")
         agent_config = self.config.agents.get(name)
+        effort = (agent_config.effort if agent_config and agent_config.effort else self.config.effort)
         process = AgentProcess(
             workspace=workspace,
             mcp_configs=self._mcp_configs_for(name),
@@ -150,6 +151,7 @@ class AssistantBot:
             allowed_tools_additional=agent_config.allowed_tools_additional if agent_config else [],
             model=self.config.model,
             disallowed_skills=self._disallowed_skills_for(name),
+            effort=effort,
         )
         session_id = self.sessions.get(name)
         try:

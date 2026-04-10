@@ -124,6 +124,24 @@ class TestAgentProcess:
         assert not any(x.startswith("Agent(") for x in disallowed)
 
     @pytest.mark.asyncio
+    async def test_build_command_with_effort(
+        self, workspace: Path
+    ) -> None:
+        proc = AgentProcess(workspace=workspace, effort="high")
+        cmd = proc._build_command(session_id=None)
+        assert "--effort" in cmd
+        idx = cmd.index("--effort")
+        assert cmd[idx + 1] == "high"
+
+    @pytest.mark.asyncio
+    async def test_build_command_without_effort(
+        self, workspace: Path
+    ) -> None:
+        proc = AgentProcess(workspace=workspace)
+        cmd = proc._build_command(session_id=None)
+        assert "--effort" not in cmd
+
+    @pytest.mark.asyncio
     async def test_env_includes_agent_name(
         self, workspace: Path
     ) -> None:

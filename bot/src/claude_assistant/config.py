@@ -10,6 +10,9 @@ import yaml
 log = logging.getLogger(__name__)
 
 
+VALID_EFFORT_LEVELS = ("low", "medium", "high", "max")
+
+
 @dataclass(frozen=True)
 class AgentConfig:
     channel_id: str
@@ -17,6 +20,7 @@ class AgentConfig:
     avatar_url: str | None = None
     allowed_tools_additional: list[str] = field(default_factory=list)
     allowed_skills: list[str] = field(default_factory=list)
+    effort: str | None = None
 
 
 @dataclass(frozen=True)
@@ -25,23 +29,35 @@ class AssistantConfig:
     allowed_user_ids: set[str] = field(default_factory=set)
     model: str | None = None
     allowed_skills: list[str] = field(default_factory=list)
+    effort: str | None = None
 
 
 def load_config(path: Path) -> AssistantConfig:
     with open(path) as f:
         raw = yaml.safe_load(f)
 
+    def _validate_effort(value: str | None, context: str) -> str | None:
+        if value is not None and value not in VALID_EFFORT_LEVELS:
+            raise ValueError(
+                f"{context}: effort must be one of {VALID_EFFORT_LEVELS}, got {value!r}"
+            )
+        return value
+
     agents: dict[str, AgentConfig] = {}
     for name, agent_raw in (raw.get("agents") or {}).items():
         channel_id = (agent_raw or {}).get("channel_id")
         if not channel_id:
             raise ValueError(f"agents.{name}.channel_id is required")
+        agent_effort = _validate_effort(
+            (agent_raw or {}).get("effort"), f"agents.{name}"
+        )
         agents[name] = AgentConfig(
             channel_id=channel_id,
             display_name=(agent_raw or {}).get("display_name"),
             avatar_url=(agent_raw or {}).get("avatar_url"),
             allowed_tools_additional=(agent_raw or {}).get("allowed_tools_additional") or [],
             allowed_skills=(agent_raw or {}).get("allowed_skills") or [],
+            effort=agent_effort,
         )
 
     if "main" not in agents:
@@ -50,8 +66,9 @@ def load_config(path: Path) -> AssistantConfig:
     allowed_user_ids = set(raw.get("allowed_user_ids") or [])
     model = raw.get("model")
     allowed_skills = raw.get("allowed_skills") or []
+    effort = _validate_effort(raw.get("effort"), "top-level")
 
-    return AssistantConfig(agents=agents, allowed_user_ids=allowed_user_ids, model=model, allowed_skills=allowed_skills)
+    return AssistantConfig(agents=agents, allowed_user_ids=allowed_user_ids, model=model, allowed_skills=allowed_skills, effort=effort)
 
 
 def parse_agent_file(path: Path) -> dict[str, str]:
