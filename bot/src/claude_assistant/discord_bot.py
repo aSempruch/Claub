@@ -81,6 +81,8 @@ class AssistantBot:
         self._idle_reaper_task: asyncio.Task | None = None
         self._mcp_server_task: asyncio.Task | None = None
         self._nextcloud_mcp_task: asyncio.Task | None = None
+        self._nextcloud_cleanup_task: asyncio.Task | None = None
+        self._nextcloud_client: object | None = None  # NextcloudClient, lazy import
         self._shutting_down = False
         self._agent_lock = asyncio.Lock()  # serialize all agent API calls
         self._last_activity: dict[str, float] = {}  # agent name -> timestamp
@@ -223,43 +225,41 @@ class AssistantBot:
             return
 
     async def _start_mcp_server(self) -> None:
-        import uvicorn
-
         mcp = create_mcp_server(
             self.schedule_store,
             self._scheduler,
             notify=self._notify_channel,
             history=self.firing_history,
         )
-        app = mcp.http_app()
-        config = uvicorn.Config(app, host="127.0.0.1", port=self.mcp_port, log_level="warning")
-        self._uvicorn_server = uvicorn.Server(config)
         log.info("Starting MCP server on 127.0.0.1:%d", self.mcp_port)
-        await self._uvicorn_server.serve()
+        await mcp.run_http_async(
+            host="127.0.0.1", port=self.mcp_port, log_level="warning", show_banner=False,
+        )
 
     async def _start_nextcloud_mcp(self) -> None:
-        import uvicorn
         from claude_assistant.nextcloud_client import NextcloudClient
         from claude_assistant.nextcloud_mcp import create_nextcloud_mcp, run_cleanup_loop
 
         cfg = self._nextcloud_config
         client = NextcloudClient(cfg["url"], cfg["login"], cfg["token"])
+        self._nextcloud_client = client
 
         # Ensure base directories exist
         await client.mkdir_p("claub/ephemeral")
         await client.mkdir_p("claub/persistent")
 
         mcp = create_nextcloud_mcp(client)
-        app = mcp.http_app()
         port = cfg["mcp_port"]
-        config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
-        server = uvicorn.Server(config)
 
         # Start cleanup loop as background task
-        asyncio.create_task(run_cleanup_loop(client, cfg["ttl_days"]))
+        self._nextcloud_cleanup_task = asyncio.create_task(
+            run_cleanup_loop(client, cfg["ttl_days"])
+        )
 
         log.info("Starting Nextcloud MCP server on 127.0.0.1:%d", port)
-        await server.serve()
+        await mcp.run_http_async(
+            host="127.0.0.1", port=port, log_level="warning", show_banner=False,
+        )
 
     # --- Message handling ---
 
@@ -507,10 +507,12 @@ class AssistantBot:
             self._supervisor_task.cancel()
         if self._idle_reaper_task:
             self._idle_reaper_task.cancel()
-        if hasattr(self, "_uvicorn_server"):
-            self._uvicorn_server.should_exit = True
         if self._mcp_server_task:
             self._mcp_server_task.cancel()
+        if self._nextcloud_cleanup_task:
+            self._nextcloud_cleanup_task.cancel()
+        if self._nextcloud_mcp_task:
+            self._nextcloud_mcp_task.cancel()
         if hasattr(self, "_scheduler"):
             self._scheduler.stop()
         # Stop all agent processes in parallel
@@ -519,4 +521,6 @@ class AssistantBot:
                 *(p.stop() for p in self._processes.values()),
                 return_exceptions=True,
             )
+        if self._nextcloud_client:
+            await self._nextcloud_client.close()
         await self._client.close()
