@@ -8,10 +8,10 @@ services:
       - NEXTCLOUD_URL=${NEXTCLOUD_URL}
       - NEXTCLOUD_LOGIN=${NEXTCLOUD_LOGIN}
       - NEXTCLOUD_TOKEN=${NEXTCLOUD_TOKEN}
-      - TZ=America/New_York
+      - TZ=${TZ:-America/New_York}
     volumes:
       - claude-home:/root/.claude
-      - ~/docker/claub:/claub
+      - ${CLAUB_DATA_PATH:?Set CLAUB_DATA_PATH in .env}:/claub
       - /tmp/playwright:/tmp/playwright:ro
     init: true
     restart: unless-stopped

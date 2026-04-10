@@ -9,5 +9,6 @@ bot/.venv/
 .envrc
 bot/.envrc
 instance/
+example/
 *.md
 !bot/**/*.md
