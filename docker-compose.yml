@@ -5,6 +5,9 @@ services:
       - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
       - LEETCODE_SESSION=${LEETCODE_SESSION}
       - LEETCODE_CSRF_TOKEN=${LEETCODE_CSRF_TOKEN}
+      - NEXTCLOUD_URL=${NEXTCLOUD_URL}
+      - NEXTCLOUD_LOGIN=${NEXTCLOUD_LOGIN}
+      - NEXTCLOUD_TOKEN=${NEXTCLOUD_TOKEN}
       - TZ=America/New_York
     volumes:
       - claude-home:/root/.claude
