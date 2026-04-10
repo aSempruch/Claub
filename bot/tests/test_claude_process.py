@@ -158,6 +158,18 @@ class TestAgentProcess:
         assert "CLAUB_AGENT_NAME" not in env
 
     @pytest.mark.asyncio
+    async def test_env_compact_pct(self, workspace: Path) -> None:
+        proc = AgentProcess(workspace=workspace, compact_pct=75)
+        env = proc._env()
+        assert env["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] == "75"
+
+    @pytest.mark.asyncio
+    async def test_env_no_compact_pct(self, workspace: Path) -> None:
+        proc = AgentProcess(workspace=workspace)
+        env = proc._env()
+        assert "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE" not in env
+
+    @pytest.mark.asyncio
     async def test_env_does_not_override_home(self, workspace: Path) -> None:
         import os
         proc = AgentProcess(workspace=workspace)

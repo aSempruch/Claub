@@ -13,6 +13,15 @@ log = logging.getLogger(__name__)
 VALID_EFFORT_LEVELS = ("low", "medium", "high", "max")
 
 
+def _validate_compact_pct(value: int | None, context: str) -> int | None:
+    if value is not None:
+        if not isinstance(value, int) or not (1 <= value <= 100):
+            raise ValueError(
+                f"{context}: compact_pct must be an integer between 1 and 100, got {value!r}"
+            )
+    return value
+
+
 @dataclass(frozen=True)
 class AgentConfig:
     channel_id: str
@@ -21,6 +30,7 @@ class AgentConfig:
     allowed_tools_additional: list[str] = field(default_factory=list)
     allowed_skills: list[str] = field(default_factory=list)
     effort: str | None = None
+    compact_pct: int | None = None
 
 
 @dataclass(frozen=True)
@@ -30,6 +40,7 @@ class AssistantConfig:
     model: str | None = None
     allowed_skills: list[str] = field(default_factory=list)
     effort: str | None = None
+    compact_pct: int | None = None
 
 
 def load_config(path: Path) -> AssistantConfig:
@@ -51,6 +62,9 @@ def load_config(path: Path) -> AssistantConfig:
         agent_effort = _validate_effort(
             (agent_raw or {}).get("effort"), f"agents.{name}"
         )
+        agent_compact_pct = _validate_compact_pct(
+            (agent_raw or {}).get("compact_pct"), f"agents.{name}"
+        )
         agents[name] = AgentConfig(
             channel_id=channel_id,
             display_name=(agent_raw or {}).get("display_name"),
@@ -58,6 +72,7 @@ def load_config(path: Path) -> AssistantConfig:
             allowed_tools_additional=(agent_raw or {}).get("allowed_tools_additional") or [],
             allowed_skills=(agent_raw or {}).get("allowed_skills") or [],
             effort=agent_effort,
+            compact_pct=agent_compact_pct,
         )
 
     if "main" not in agents:
@@ -67,8 +82,9 @@ def load_config(path: Path) -> AssistantConfig:
     model = raw.get("model")
     allowed_skills = raw.get("allowed_skills") or []
     effort = _validate_effort(raw.get("effort"), "top-level")
+    compact_pct = _validate_compact_pct(raw.get("compact_pct"), "top-level")
 
-    return AssistantConfig(agents=agents, allowed_user_ids=allowed_user_ids, model=model, allowed_skills=allowed_skills, effort=effort)
+    return AssistantConfig(agents=agents, allowed_user_ids=allowed_user_ids, model=model, allowed_skills=allowed_skills, effort=effort, compact_pct=compact_pct)
 
 
 def parse_agent_file(path: Path) -> dict[str, str]:

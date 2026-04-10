@@ -51,6 +51,7 @@ class AgentProcess:
         model: str | None = None,
         disallowed_skills: list[str] | None = None,
         effort: str | None = None,
+        compact_pct: int | None = None,
     ) -> None:
         self.workspace = workspace
         self.mcp_configs = mcp_configs or []
@@ -60,6 +61,7 @@ class AgentProcess:
         self.model = model
         self.disallowed_skills = disallowed_skills or []
         self.effort = effort
+        self.compact_pct = compact_pct
         self._process: asyncio.subprocess.Process | None = None
         self._session_id: str | None = None
         self._lock = asyncio.Lock()
@@ -130,6 +132,8 @@ class AgentProcess:
         # Neutralize git's interactive editor so `rebase -i`, `commit` without
         # -m, etc. don't hang waiting on stdin.
         env["GIT_EDITOR"] = "true"
+        if self.compact_pct is not None:
+            env["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] = str(self.compact_pct)
         return env
 
     async def start(self, session_id: str | None = None) -> None:

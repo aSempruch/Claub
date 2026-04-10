@@ -141,6 +141,56 @@ def test_effort_invalid_per_agent(tmp_path: Path) -> None:
         load_config(cfg_file)
 
 
+def test_compact_pct_global_default(tmp_path: Path) -> None:
+    cfg_file = tmp_path / "agents.yaml"
+    cfg_file.write_text(
+        "compact_pct: 75\n"
+        "agents:\n"
+        "  main:\n"
+        '    channel_id: "123"\n'
+    )
+    config = load_config(cfg_file)
+    assert config.compact_pct == 75
+    assert config.agents["main"].compact_pct is None
+
+
+def test_compact_pct_per_agent(tmp_path: Path) -> None:
+    cfg_file = tmp_path / "agents.yaml"
+    cfg_file.write_text(
+        "agents:\n"
+        "  main:\n"
+        '    channel_id: "123"\n'
+        "    compact_pct: 60\n"
+    )
+    config = load_config(cfg_file)
+    assert config.compact_pct is None
+    assert config.agents["main"].compact_pct == 60
+
+
+def test_compact_pct_invalid_value(tmp_path: Path) -> None:
+    cfg_file = tmp_path / "agents.yaml"
+    cfg_file.write_text(
+        "compact_pct: 150\n"
+        "agents:\n"
+        "  main:\n"
+        '    channel_id: "123"\n'
+    )
+    with pytest.raises(ValueError, match="compact_pct must be an integer between 1 and 100"):
+        load_config(cfg_file)
+
+
+def test_compact_pct_invalid_per_agent(tmp_path: Path) -> None:
+    cfg_file = tmp_path / "agents.yaml"
+    cfg_file.write_text(
+        "agents:\n"
+        "  main:\n"
+        '    channel_id: "123"\n'
+        "    compact_pct: 0\n"
+    )
+    with pytest.raises(ValueError, match="agents.main"):
+        load_config(cfg_file)
+
+
 def test_allowed_skills_config(tmp_path: Path) -> None:
     cfg_file = tmp_path / "agents.yaml"
     cfg_file.write_text(
