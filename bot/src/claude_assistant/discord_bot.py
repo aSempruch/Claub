@@ -61,7 +61,6 @@ class AssistantBot:
         agents_dir: Path | None = None,
         mcp_port: int = 9400,
         all_skills: list[str] | None = None,
-        nextcloud_config: dict | None = None,
     ) -> None:
         self.config = config
         self.workspaces_dir = workspaces_dir
@@ -72,7 +71,6 @@ class AssistantBot:
         self.agents_dir = agents_dir
         self.mcp_port = mcp_port
         self.all_skills = all_skills or []
-        self._nextcloud_config = nextcloud_config
         self.router = Router(config)
 
         self._processes: dict[str, AgentProcess] = {}
@@ -80,9 +78,6 @@ class AssistantBot:
         self._supervisor_task: asyncio.Task | None = None
         self._idle_reaper_task: asyncio.Task | None = None
         self._mcp_server_task: asyncio.Task | None = None
-        self._nextcloud_mcp_task: asyncio.Task | None = None
-        self._nextcloud_cleanup_task: asyncio.Task | None = None
-        self._nextcloud_client: object | None = None  # NextcloudClient, lazy import
         self._shutting_down = False
         self._agent_lock = asyncio.Lock()  # serialize all agent API calls
         self._last_activity: dict[str, float] = {}  # agent name -> timestamp
@@ -108,8 +103,6 @@ class AssistantBot:
             )
             self._scheduler.start()
             self._mcp_server_task = asyncio.create_task(self._start_mcp_server())
-            if self._nextcloud_config:
-                self._nextcloud_mcp_task = asyncio.create_task(self._start_nextcloud_mcp())
 
         @self._client.event
         async def on_message(message: discord.Message) -> None:
@@ -234,31 +227,6 @@ class AssistantBot:
         log.info("Starting MCP server on 127.0.0.1:%d", self.mcp_port)
         await mcp.run_http_async(
             host="127.0.0.1", port=self.mcp_port, log_level="warning", show_banner=False,
-        )
-
-    async def _start_nextcloud_mcp(self) -> None:
-        from claude_assistant.nextcloud_client import NextcloudClient
-        from claude_assistant.nextcloud_mcp import create_nextcloud_mcp, run_cleanup_loop
-
-        cfg = self._nextcloud_config
-        client = NextcloudClient(cfg["url"], cfg["login"], cfg["token"])
-        self._nextcloud_client = client
-
-        # Ensure base directories exist
-        await client.mkdir_p("claub/ephemeral")
-        await client.mkdir_p("claub/persistent")
-
-        mcp = create_nextcloud_mcp(client)
-        port = cfg["mcp_port"]
-
-        # Start cleanup loop as background task
-        self._nextcloud_cleanup_task = asyncio.create_task(
-            run_cleanup_loop(client, cfg["ttl_days"])
-        )
-
-        log.info("Starting Nextcloud MCP server on 127.0.0.1:%d", port)
-        await mcp.run_http_async(
-            host="127.0.0.1", port=port, log_level="warning", show_banner=False,
         )
 
     # --- Message handling ---
@@ -509,10 +477,6 @@ class AssistantBot:
             self._idle_reaper_task.cancel()
         if self._mcp_server_task:
             self._mcp_server_task.cancel()
-        if self._nextcloud_cleanup_task:
-            self._nextcloud_cleanup_task.cancel()
-        if self._nextcloud_mcp_task:
-            self._nextcloud_mcp_task.cancel()
         if hasattr(self, "_scheduler"):
             self._scheduler.stop()
         # Stop all agent processes in parallel
@@ -521,6 +485,4 @@ class AssistantBot:
                 *(p.stop() for p in self._processes.values()),
                 return_exceptions=True,
             )
-        if self._nextcloud_client:
-            await self._nextcloud_client.close()
         await self._client.close()

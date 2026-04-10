@@ -58,24 +58,6 @@ def main() -> None:
 
     mcp_port = int(os.environ.get("CLAUB_MCP_PORT", "9400"))
 
-    # Nextcloud file sharing (optional)
-    nc_url = os.environ.get("NEXTCLOUD_URL")
-    nc_login = os.environ.get("NEXTCLOUD_LOGIN")
-    nc_token = os.environ.get("NEXTCLOUD_TOKEN")
-    nc_mcp_port = int(os.environ.get("NEXTCLOUD_MCP_PORT", "9401"))
-    nc_ttl_days = int(os.environ.get("NEXTCLOUD_EPHEMERAL_TTL_DAYS", "3"))
-    nc_config = None
-    if nc_url and nc_login and nc_token:
-        nc_config = {
-            "url": nc_url,
-            "login": nc_login,
-            "token": nc_token,
-            "mcp_port": nc_mcp_port,
-            "ttl_days": nc_ttl_days,
-        }
-    else:
-        log.info("Nextcloud config not set, file sharing MCP disabled")
-
     config = load_config(config_path)
     sessions = SessionStore(sessions_path)
     schedules = ScheduleStore(schedules_path)
@@ -93,7 +75,6 @@ def main() -> None:
         agents_dir=agents_dir if agents_dir.exists() else None,
         mcp_port=mcp_port,
         all_skills=all_skills,
-        nextcloud_config=nc_config,
     )
 
     log.info("Starting claude-assistant")

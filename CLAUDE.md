@@ -204,15 +204,15 @@ The service runs `npx @playwright/mcp@latest --port 3846 --host 127.0.0.1 --allo
 
 #### Nextcloud File Sharing MCP
 
-An embedded HTTP MCP server (like schedules) that lets agents upload files to Nextcloud and get share links. Runs on `127.0.0.1:9401` (configurable via `NEXTCLOUD_MCP_PORT`).
+A subprocess MCP server (like git) at `/claub/mcps/nextcloud/` that lets agents upload files to Nextcloud and get share links. Each agent spawns its own instance via stdio.
 
 **Setup:** Create a dedicated Nextcloud user, generate an app password (Settings > Security), set `NEXTCLOUD_URL`, `NEXTCLOUD_LOGIN`, and `NEXTCLOUD_TOKEN` in `.env`. Optional: `NEXTCLOUD_EPHEMERAL_TTL_DAYS` (default 3).
 
-**Tools:** `mcp__nextcloud__share_file`, `mcp__nextcloud__list_shares`, `mcp__nextcloud__delete_shared_file`.
+**Tools:** `mcp__nextcloud__share_file`, `mcp__nextcloud__list_shares`, `mcp__nextcloud__delete_shared_file`, `mcp__nextcloud__cleanup_ephemeral`.
 
 **File organization:** Files are stored under `claub/ephemeral/{agent}/` (auto-cleaned after TTL) or `claub/persistent/{agent}/` (permanent). Share links open Nextcloud's built-in viewer (PDF viewer for PDFs).
 
-**Cleanup:** Background task runs on startup + every 24h, deleting ephemeral files older than the TTL.
+**Cleanup:** Runs automatically on process startup. Can also be triggered manually via `cleanup_ephemeral` tool.
 
 #### Custom MCP Servers
 

@@ -10,7 +10,6 @@ dependencies = [
     "fastmcp>=2.0",
     "uvicorn>=0.30",
     "croniter>=2.0",
-    "httpx>=0.27",
 ]
 
 [project.optional-dependencies]
