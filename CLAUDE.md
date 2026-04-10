@@ -1,8 +1,8 @@
 # Claub — Discord Bot for Claude Code CLI
 
-> **Note for the dev-time Claude Code instance:** This file documents the **Claub project** — a bot that spawns its own Claude CLI processes at runtime. References to "agents", "permissions", "MCP configs", and "sessions" below describe how the **bot's** Claude processes are configured, **not** how you (the Claude Code instance helping develop this project) should behave. Do not adopt the bot's permission settings, or agent prompts as your own.
-
 A Discord bot that bridges Discord channels to Claude Code CLI sessions. Each agent gets its own channel and a persistent streaming process, with optional cron schedules. Runs in Docker.
+
+> This file serves as both project documentation and [Claude Code context](https://docs.anthropic.com/en/docs/claude-code/memory#claudemd). For a working example configuration, see the [`example/`](example/) directory.
 
 ## Quick Start
 
@@ -72,10 +72,15 @@ entrypoint.sh                     # Copies config into ~/.claude/, starts bot
 docker-compose.yml                # Service definition with volumes — ALL docker compose commands run from this project root
 .dockerignore                     # Build context exclusions
 
-scripts/                          # Legacy service management (launchd, pre-Docker)
-  run.sh                          # Wrapper for launchd
-  ctl.sh                          # Service control
-  com.asempruch.claub.plist       # launchd plist template
+mcps/                             # MCP servers (baked into Docker image)
+  git/                            # Workspace-scoped git operations
+  leetcode-stats/                 # LeetCode GraphQL API client
+  nextcloud/                      # Nextcloud file sharing via WebDAV
+
+example/                          # Starter configuration (sanitized)
+  config/                         # agents.yaml, CLAUDE.md, settings, MCP config
+    agents/                       # Agent identity prompts
+  workspaces/                     # Workspace living configs
 
 /claub/                           # Instance root inside container (bind-mounted from host)
   config/                         # All user-editable configuration
@@ -87,10 +92,7 @@ scripts/                          # Legacy service management (launchd, pre-Dock
       main.md                     # Main agent system prompt
       journalist.md               # Journalist agent system prompt
       journalist.mcp.json         # Optional per-agent MCP config
-  mcps/                           # Custom MCP servers (one dir per server)
-    leetcode-stats/               # Example: LeetCode GraphQL API wrapper
-      pyproject.toml
-      server.py
+  mcps/                           # Additional MCP servers (extend repo ones)
   workspaces/                     # Runtime scratch dirs per agent (auto-created)
     {name}/.claude-skills/        # Symlink → .claude/skills/ (agent-authored skills)
   data/                           # sessions.json — session ID persistence
@@ -189,22 +191,19 @@ MCP servers give agents access to external tools (APIs, browsers, etc.) without 
 
 #### Playwright MCP (Host-Side)
 
-Playwright runs on the **host** as a launchd service (not inside the container — it needs a browser). The container connects to it via `host.docker.internal`:
+Playwright runs on the **host** (not inside the container — it needs a browser). The container connects to it via `host.docker.internal`:
 
 ```bash
-scripts/playwright-mcp.sh install   # Install launchd plist
-scripts/playwright-mcp.sh start     # Start the service
-scripts/playwright-mcp.sh status    # Check status
-scripts/playwright-mcp.sh logs      # View logs
+npx @playwright/mcp@latest --port 3846 --host 127.0.0.1
 ```
 
-The service runs `npx @playwright/mcp@latest --port 3846 --host 127.0.0.1 --allowed-hosts host.docker.internal:3846` and auto-starts on reboot.
+The host must keep this process running (e.g., via launchd, systemd, or a terminal session). The container reaches it at `http://host.docker.internal:3846/mcp`.
 
 **Snapshot file sharing:** Agents save Playwright snapshots to `/tmp/playwright/` to keep large accessibility trees out of context. Since Playwright runs on the host, the file is written to the host's `/tmp/playwright/`, which is bind-mounted read-only into the container at the same path. This requires the Docker runtime (e.g., Colima) to mount `/tmp/playwright` into the VM — this is **not** done by default. For Colima, add it to the `mounts` list in `~/.colima/default/colima.yaml`. Docker Desktop for Mac should work out of the box since it shares `/tmp` by default. **This is a portability concern** — new users or different Docker runtimes may need manual mount configuration for snapshot sharing to work.
 
 #### Nextcloud File Sharing MCP
 
-A subprocess MCP server (like git) at `/claub/mcps/nextcloud/` that lets agents upload files to Nextcloud and get share links. Each agent spawns its own instance via stdio.
+A subprocess MCP server (like git) at `/app/mcps/nextcloud/` in the container that lets agents upload files to Nextcloud and get share links. Each agent spawns its own instance via stdio.
 
 **Setup:** Create a dedicated Nextcloud user, generate an app password (Settings > Security), set `NEXTCLOUD_URL`, `NEXTCLOUD_LOGIN`, and `NEXTCLOUD_TOKEN` in `.env`. Optional: `NEXTCLOUD_EPHEMERAL_TTL_DAYS` (default 3).
 
@@ -218,7 +217,7 @@ A subprocess MCP server (like git) at `/claub/mcps/nextcloud/` that lets agents 
 
 Custom MCP servers live in `/claub/mcps/` (bind-mounted from host). The entrypoint automatically runs `uv sync` for any subdirectory containing a `pyproject.toml` on every container start, so Python-based MCPs are always ready.
 
-Use the `/build-mcp-server` skill for the full guide on building, wiring, and testing custom MCP servers for agents.
+See the `mcps/` directory for examples of the MCP server pattern. Baked-in servers live at `/app/mcps/` in the container; instance servers at `/claub/mcps/` can extend or add to them.
 
 ### Permissions (/claub/config/settings.json)
 
