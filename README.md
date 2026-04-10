@@ -1,0 +1,90 @@
+# Claub
+
+A Discord bot that gives Claude Code CLI agents persistent channels. Each agent gets its own Discord channel, a long-running streaming process, and optional cron schedules — all running in Docker.
+
+## Architecture
+
+```
+Discord User
+    │
+    ▼
+AssistantBot (discord.py)
+    │
+    ├─ Router ──► maps channel ID → agent name
+    │
+    ├─ Agent Processes (one per agent)
+    │   └─ Long-running `claude --output-format stream-json`
+    │   └─ Communicates via stdin/stdout JSON events
+    │   └─ Lazy startup, supervised — auto-restarts on crash
+    │
+    ├─ Scheduler (APScheduler)
+    │   └─ Agents manage their own cron schedules via MCP tools
+    │
+    └─ MCP Server (FastMCP, localhost:9400)
+        └─ Schedule management tools exposed to agents
+```
+
+## Highlights
+
+- **Persistent streaming** — each agent runs as a long-lived `stream-json` process, not one-shot invocations. Internal asyncio locks serialize communication on the pipe.
+- **Lazy startup with supervision** — processes start on first message or scheduled trigger. A supervisor restarts dead processes; an idle reaper kills inactive ones after 10 minutes to prevent stale OAuth tokens.
+- **Global agent lock** — serializes all agent API calls so only one agent talks to Claude at a time, preventing credential/token races.
+- **Three-level agent configuration** — global rules (Level 1), agent identity (Level 2), and workspace living config that agents can self-modify (Level 3). See [`example/`](example/) for the full pattern.
+- **File-based agent memory** — agents maintain their own memory in workspace directories with mandatory startup reads, write-time pruning, and bounded growth.
+- **Human-like scheduling** — agents use one-shot schedules with natural time variation instead of rigid cron. A lognormal jitter model and beta-distributed skip probability make agent check-ins feel organic.
+- **Embedded MCP server** — agents manage their own schedules via MCP tools. Density limits prevent runaway schedule creation (max 5 firings/24h, 30/7d).
+- **Agent-authored skills via symlink** — agents can create their own skills and subagents without write access to `.claude/` (which would let them escalate permissions).
+- **Docker isolation** — container provides filesystem boundaries. No macOS Seatbelt sandbox needed. See [`docs/sandbox-investigation/`](docs/sandbox-investigation/) for the security analysis.
+
+## Included MCP Servers
+
+| Server | Description |
+|--------|-------------|
+| [`mcps/git/`](mcps/git/) | Workspace-scoped git operations with path containment validation (15 tools) |
+| [`mcps/leetcode-stats/`](mcps/leetcode-stats/) | LeetCode GraphQL API client — stats, cloud code, submissions (4 tools, with tests) |
+| [`mcps/nextcloud/`](mcps/nextcloud/) | Nextcloud file sharing via WebDAV with TTL-based ephemeral cleanup (4 tools) |
+
+## Example Agents
+
+The [`example/`](example/) directory contains a complete starter configuration with three agents:
+
+- **Main** — general-purpose assistant with automatic action item capture
+- **Journalist** — news agent with beat coverage, editorial standards, and daily brief memory
+- **Shopping Assistant** — product research agent prioritizing quality and evidence-based recommendations
+
+## Tech Stack
+
+Python 3.12 · discord.py · Claude Code CLI · FastMCP · APScheduler · Docker
+
+## Quick Start
+
+```bash
+# Copy example config to your instance directory
+cp -r example/ ~/claub/
+
+# Fill in your Discord channel IDs in ~/claub/config/agents.yaml
+# Set your bot token
+echo 'DISCORD_BOT_TOKEN=your-token' > .env
+echo 'CLAUB_DATA_PATH=~/claub' >> .env
+
+# Build and start
+docker compose up -d
+
+# Authenticate Claude CLI (one-time)
+docker exec -it claude-claub-1 claude
+```
+
+See [`CLAUDE.md`](CLAUDE.md) for full documentation on configuration, deployment, and architecture.
+
+## Tests
+
+```bash
+cd bot
+uv run --extra dev pytest tests/ -v --ignore=tests/test_integration.py
+```
+
+148 tests covering process management, scheduling, density validation, MCP tools, message chunking, routing, and session persistence.
+
+## License
+
+[MIT](LICENSE)
