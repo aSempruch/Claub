@@ -113,11 +113,15 @@ class NextcloudClient:
         return resp.json()["ocs"]["data"]
 
     async def list_shares(self, remote_path: str) -> list[dict]:
-        """List all shares for a given path."""
+        """List all shares for files within the given directory path."""
         resp = await self._http.get(
-            f"{self._ocs_base}?format=json",
+            self._ocs_base,
             headers={"OCS-APIRequest": "true"},
-            params={"path": f"/{remote_path.lstrip('/')}", "reshares": "true"},
+            params={
+                "path": f"/{remote_path.lstrip('/')}",
+                "subfiles": "true",
+                "format": "json",
+            },
         )
         resp.raise_for_status()
         return resp.json()["ocs"]["data"]

@@ -211,3 +211,53 @@ async def test_cleanup_skips_when_all_recent(mock_client: AsyncMock) -> None:
 
     assert deleted == 0
     mock_client.delete.assert_not_called()
+
+
+# --- Integration tests (require real Nextcloud) ---
+
+NEXTCLOUD_INTEGRATION = os.environ.get("NEXTCLOUD_INTEGRATION_TEST")
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(not NEXTCLOUD_INTEGRATION, reason="Set NEXTCLOUD_INTEGRATION_TEST=1")
+async def test_integration_upload_share_delete() -> None:
+    """Full round-trip: upload, share, verify link, delete."""
+    from claude_assistant.nextcloud_client import NextcloudClient
+    import tempfile
+
+    client = NextcloudClient(
+        base_url=os.environ["NEXTCLOUD_URL"],
+        username=os.environ["NEXTCLOUD_LOGIN"],
+        token=os.environ["NEXTCLOUD_TOKEN"],
+    )
+
+    try:
+        # Create a test file
+        with tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as f:
+            f.write(b"Integration test content")
+            local_path = f.name
+
+        # Upload and share
+        result = await _share_file(
+            client=client,
+            agent="test",
+            file_path=local_path,
+            persistent=False,
+            expire_days=1,
+        )
+        parsed = json.loads(result)
+        assert "url" in parsed
+        assert parsed["url"].startswith("http")
+
+        # List shares
+        shares_result = await _list_shares(client, "test", persistent=False)
+        shares = json.loads(shares_result)
+        assert any(s["name"] == Path(local_path).name for s in shares)
+
+        # Delete
+        delete_result = await _delete_shared_file(client, "test", Path(local_path).name)
+        assert "Deleted" in delete_result
+
+    finally:
+        await client.close()
+        Path(local_path).unlink(missing_ok=True)
