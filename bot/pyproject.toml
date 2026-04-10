@@ -4,7 +4,6 @@ version = "0.1.0"
 requires-python = ">=3.12"
 description = "Discord bot bridging channels to persistent Claude Code CLI agent sessions"
 license = {text = "MIT"}
-readme = "README.md"
 keywords = ["discord", "claude", "ai", "agents", "mcp"]
 dependencies = [
     "discord.py>=2.4",
