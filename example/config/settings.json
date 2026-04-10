@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__playwright__*",
+      "mcp__schedules__*",
+      "mcp__git__*",
+      "mcp__nextcloud__*",
+      "WebFetch",
+      "WebSearch"
+    ],
+    "additionalDirectories": [
+      "/tmp"
+    ]
+  }
+}

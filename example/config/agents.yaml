@@ -1,0 +1,19 @@
+model: sonnet
+effort: high
+
+allowed_user_ids:
+  - "YOUR_DISCORD_USER_ID"
+
+agents:
+  main:
+    channel_id: "YOUR_MAIN_CHANNEL_ID"
+
+  journalist:
+    channel_id: "YOUR_JOURNALIST_CHANNEL_ID"
+    display_name: "The Journalist"
+
+  shopping-assistant:
+    channel_id: "YOUR_SHOPPING_CHANNEL_ID"
+    display_name: "Shopping Assistant"
+    allowed_skills:
+      - amazon-browse

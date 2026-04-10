@@ -1,0 +1,23 @@
+{
+  "mcpServers": {
+    "playwright": {
+      "type": "http",
+      "url": "http://host.docker.internal:3846/mcp"
+    },
+    "schedules": {
+      "type": "http",
+      "url": "http://localhost:9400/mcp",
+      "headers": {
+        "X-Agent-Name": "${CLAUB_AGENT_NAME}"
+      }
+    },
+    "nextcloud": {
+      "command": "uv",
+      "args": ["--directory", "/app/mcps/nextcloud", "run", "server.py"]
+    },
+    "git": {
+      "command": "uv",
+      "args": ["--directory", "/app/mcps/git", "run", "server.py"]
+    }
+  }
+}
