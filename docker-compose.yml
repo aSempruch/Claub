@@ -9,9 +9,11 @@ services:
       - NEXTCLOUD_LOGIN=${NEXTCLOUD_LOGIN}
       - NEXTCLOUD_TOKEN=${NEXTCLOUD_TOKEN}
       - TZ=${TZ:-America/New_York}
+      - CLAUB_HOST_PATH=${CLAUB_DATA_PATH}
     volumes:
       - claude-home:/root/.claude
       - ${CLAUB_DATA_PATH:?Set CLAUB_DATA_PATH in .env}:/claub
+      - ${CLAUB_DATA_PATH}:${CLAUB_DATA_PATH}
       - /tmp/playwright:/tmp/playwright:ro
     init: true
     restart: unless-stopped

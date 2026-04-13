@@ -201,6 +201,13 @@ The host must keep this process running (e.g., via launchd, systemd, or a termin
 
 **Snapshot file sharing:** Agents save Playwright snapshots to `/tmp/playwright/` to keep large accessibility trees out of context. Since Playwright runs on the host, the file is written to the host's `/tmp/playwright/`, which is bind-mounted read-only into the container at the same path. This requires the Docker runtime (e.g., Colima) to mount `/tmp/playwright` into the VM — this is **not** done by default. For Colima, add it to the `mounts` list in `~/.colima/default/colima.yaml`. Docker Desktop for Mac should work out of the box since it shares `/tmp` by default. **This is a portability concern** — new users or different Docker runtimes may need manual mount configuration for snapshot sharing to work.
 
+**File uploads (host-path double mount):** Playwright's `browser_file_upload` tool `fs.stat`s paths on the **host**, so passing a container-only path like `/claub/workspaces/career/resume.pdf` fails with ENOENT. Additionally, Playwright MCP enforces an allowed-roots check using the MCP `roots` capability — Claude Code sends its container cwd as a root, so host-native paths get rejected before `fs.stat` even runs. Two things are needed:
+
+1. **`--allow-unrestricted-file-access`** on the Playwright MCP server — disables the roots-based path restriction so host paths aren't rejected. This flag is configured in the launchd plist (or equivalent service definition).
+2. **Double mount** in `docker-compose.yml` — the host data directory is bind-mounted at both `/claub` and its native host path via `${CLAUB_DATA_PATH}:${CLAUB_DATA_PATH}`. The container exports `CLAUB_HOST_PATH=${CLAUB_DATA_PATH}` so agents can construct host-valid paths.
+
+Agents use `/claub/...` for everything normally, but swap in `$CLAUB_HOST_PATH/...` when handing a path to Playwright's file-chooser tools — e.g. `/claub/workspaces/career/resume.pdf` becomes `$CLAUB_HOST_PATH/workspaces/career/resume.pdf`, which resolves to e.g. `/Users/you/docker/claub/workspaces/career/resume.pdf` on both sides. Agent-facing documentation lives in `/claub/config/CLAUDE.md`.
+
 #### Nextcloud File Sharing MCP
 
 A subprocess MCP server (like git) at `/app/mcps/nextcloud/` in the container that lets agents upload files to Nextcloud and get share links. Each agent spawns its own instance via stdio.
@@ -312,19 +319,28 @@ CLAUDE_INTEGRATION_TEST=1 uv run --extra dev pytest tests/test_integration.py -v
 
 ### Testing Claude CLI Directly
 
-To test how agents behave inside the container:
+Always pass `--no-session-persistence` when testing to avoid creating stale sessions that interfere with the bot's session management.
+
+Quick auth check:
 
 ```bash
-# Quick auth check
-docker exec claude-claub-1 claude -p "say hello"
+docker exec claude-claub-1 claude -p "say hello" --no-session-persistence
 ```
 
-To run an agent interactively (same config, workspace, and permissions as the bot):
+One-shot prompt test (matches production config — same workspace, permissions, and MCP servers):
 
 ```bash
-# Interactive agent session (e.g. main)
-docker exec -it claude-claub-1 bash -c 'cd /claub/workspaces/main && claude --agent main --permission-mode acceptEdits --mcp-config /claub/config/mcp.json --no-session-persistence'
+# Replace {name} with agent name (e.g. main, career, journalist)
+docker exec claude-claub-1 bash -c 'cd /claub/workspaces/{name} && claude -p "your prompt here" --permission-mode acceptEdits --mcp-config /claub/config/mcp.json --no-session-persistence'
 ```
+
+Interactive session:
+
+```bash
+docker exec -it claude-claub-1 bash -c 'cd /claub/workspaces/{name} && claude --permission-mode acceptEdits --mcp-config /claub/config/mcp.json --no-session-persistence'
+```
+
+Note: production agents also get `--agents` (agent definition JSON), `--agent` (agent name), per-agent MCP configs, `--allowedTools`, `--disallowedTools`, `--model`, and `--effort` flags set by `AgentProcess._build_command()`. The above commands omit these for brevity — add them if the test depends on agent identity or tool restrictions.
 
 ### Key Design Decisions
 
