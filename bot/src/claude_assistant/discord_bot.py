@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import signal
 import time
 from pathlib import Path
@@ -82,7 +83,7 @@ class AssistantBot:
         self._agent_lock = asyncio.Lock()  # serialize all agent API calls
         self._last_activity: dict[str, float] = {}  # agent name -> timestamp
         self._reaped: set[str] = set()  # agents intentionally killed by idle reaper
-        # Per-process reap threshold is set in AgentProcess.__init__ (lognormal, median 45 min)
+        # Per-process reap threshold is set in AgentProcess.__init__ (lognormal, median ~40 min)
 
         intents = discord.Intents.default()
         intents.message_content = True
@@ -205,7 +206,12 @@ class AssistantBot:
                         continue
                     last = self._last_activity.get(name, 0)
                     idle_secs = now - last if last else 0
-                    if last and idle_secs > process.reap_threshold:
+                    if last and idle_secs > process.reap_threshold and not process.busy:
+                        # Random delay so kill times don't land on round minutes
+                        await asyncio.sleep(random.uniform(0, 60))
+                        # Re-check: a message may have arrived during the delay
+                        if process.busy:
+                            continue
                         log.info(
                             "Reaping idle agent %s (idle %.0fs, threshold %.0fs)",
                             name, idle_secs, process.reap_threshold,

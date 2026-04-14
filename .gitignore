@@ -9,3 +9,4 @@ test_scripts/
 .playwright-mcp/
 .claude/
 CLAUDE.local.md
+.mcp.json

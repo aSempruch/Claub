@@ -68,8 +68,16 @@ class AgentProcess:
         self._lifecycle_lock = asyncio.Lock()
         self._ready = asyncio.Event()
         self._first_message = False
-        # Lognormal idle timeout: median 45 min, wide spread
-        self.reap_threshold = 2700 * random.lognormvariate(0, 0.3)
+        # Lognormal idle timeout mimicking real Claude Code session lengths:
+        #   median ~40 min, sigma 0.75 gives wide spread
+        #   ~68%: 19 min – 85 min    ~95%: 9 min – 3 hrs
+        #   cap 6 hrs to prevent extreme tail outliers
+        self.reap_threshold = min(21600, 2400 * random.lognormvariate(0, 0.75))
+
+    @property
+    def busy(self) -> bool:
+        """True when a send_message call is in progress (stream lock held)."""
+        return self._lock.locked()
 
     def _build_command(self, session_id: str | None) -> list[str]:
         cmd = [
