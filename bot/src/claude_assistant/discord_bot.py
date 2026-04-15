@@ -80,7 +80,6 @@ class AssistantBot:
         self._idle_reaper_task: asyncio.Task | None = None
         self._mcp_server_task: asyncio.Task | None = None
         self._shutting_down = False
-        self._agent_lock = asyncio.Lock()  # serialize all agent API calls
         self._last_activity: dict[str, float] = {}  # agent name -> timestamp
         self._reaped: set[str] = set()  # agents intentionally killed by idle reaper
         # Per-process reap threshold is set in AgentProcess.__init__ (lognormal, median ~40 min)
@@ -275,27 +274,20 @@ class AssistantBot:
         await self._send_chunked(message.channel, agent_name, result)
 
     async def _send_with_restart(self, agent_name: str, content: str) -> str:
-        """Send a message to an agent, restarting the process on failure.
-
-        Serialized via _agent_lock to prevent concurrent API calls that
-        race on OAuth token refresh (all agents share one credentials file).
-        """
-        if self._agent_lock.locked():
-            log.info("Agent %s waiting for agent lock", agent_name)
-        async with self._agent_lock:
-            self._reaped.discard(agent_name)
-            self._last_activity[agent_name] = time.monotonic()
-            process = await self._get_or_start_process(agent_name)
-            try:
-                result = await process.send_message(content)
-            except AuthenticationError:
-                raise
-            except RuntimeError:
-                log.exception("Agent %s error, restarting", agent_name)
-                process = await self._restart_process(agent_name)
-                result = await process.send_message(content)
-            self._last_activity[agent_name] = time.monotonic()
-            return result
+        """Send a message to an agent, restarting the process on failure."""
+        self._reaped.discard(agent_name)
+        self._last_activity[agent_name] = time.monotonic()
+        process = await self._get_or_start_process(agent_name)
+        try:
+            result = await process.send_message(content)
+        except AuthenticationError:
+            raise
+        except RuntimeError:
+            log.exception("Agent %s error, restarting", agent_name)
+            process = await self._restart_process(agent_name)
+            result = await process.send_message(content)
+        self._last_activity[agent_name] = time.monotonic()
+        return result
 
     # --- Scheduled tasks ---
 

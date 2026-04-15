@@ -349,7 +349,6 @@ Note: production agents also get `--agents` (agent definition JSON), `--agent` (
 - **Stream lock inside AgentProcess**: Internal asyncio lock serializes send/receive on the stream-json pipe. No bot-level locks needed.
 - **Lifecycle lock**: Separate lock in AgentProcess protects start/stop/restart transitions from racing with the supervisor.
 - **Idle reaper**: Background task kills agent processes after 10 minutes of inactivity. Prevents stale processes from holding expiring OAuth tokens, which caused auth races when multiple long-lived processes shared the same credentials file. A `_reaped` set prevents the supervisor from immediately restarting intentionally killed processes.
-- **Global agent lock**: `_agent_lock` in `AssistantBot` serializes all agent API calls so only one agent talks to Claude at a time, preventing credential/token races.
 - **Docker-first**: The container runs Claude CLI with its native `~/.claude/` path. Settings/CLAUDE.md are copied from `/claub/config/` into `~/.claude/` at startup by the entrypoint. No HOME override hack.
 - **acceptEdits permission mode**: All processes run with `--permission-mode acceptEdits`
 - **Inline agent definitions**: Agent `.md` files are parsed by the bot and passed to each CLI process via `--agents` JSON flag. Each process only sees its own agent — no `disallowedTools` hack needed to prevent cross-agent invocation. Built-in agents (Explore, Plan, etc.) remain available.
