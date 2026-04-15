@@ -2,7 +2,7 @@
 
 A Discord bot that bridges Discord channels to Claude Code CLI sessions. Each agent gets its own channel and a persistent streaming process, with optional cron schedules. Runs in Docker.
 
-> This file serves as both project documentation and [Claude Code context](https://docs.anthropic.com/en/docs/claude-code/memory#claudemd). For a working example configuration, see the [`example/`](example/) directory.
+> This file is [Claude Code context](https://docs.anthropic.com/en/docs/claude-code/memory#claudemd) and detailed project documentation. See [`README.md`](README.md) for the public-facing overview and [`example/`](example/) for a working example configuration.
 
 ## Quick Start
 
@@ -67,6 +67,7 @@ bot/                              # Python package (discord bot)
     schedule_store.py             # ScheduleStore — atomic JSON persistence of schedules
   tests/                          # pytest + pytest-asyncio
 
+README.md                         # Public-facing project overview and highlights
 Dockerfile                        # Python 3.12 + Node.js + uv + Claude CLI
 entrypoint.sh                     # Copies config into ~/.claude/, starts bot
 docker-compose.yml                # Service definition with volumes — ALL docker compose commands run from this project root
