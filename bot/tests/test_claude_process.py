@@ -80,6 +80,69 @@ class TestAgentProcess:
         assert parsed["parent_tool_use_id"] is None
 
     @pytest.mark.asyncio
+    async def test_on_start_hooks_run_with_agent_env(
+        self, workspace: Path, tmp_path: Path
+    ) -> None:
+        marker = tmp_path / "marker.txt"
+        hook = f'echo "$CLAUB_AGENT_NAME" > {marker}'
+        proc = AgentProcess(
+            workspace=workspace,
+            agent_name="journalist",
+            on_start_hooks=[hook],
+        )
+        await proc._run_hooks(proc.on_start_hooks, phase="on_start")
+        assert marker.read_text().strip() == "journalist"
+
+    @pytest.mark.asyncio
+    async def test_on_stop_hooks_run(
+        self, workspace: Path, tmp_path: Path
+    ) -> None:
+        marker = tmp_path / "stopped.txt"
+        hook = f"echo stopped > {marker}"
+        proc = AgentProcess(
+            workspace=workspace,
+            agent_name="main",
+            on_stop_hooks=[hook],
+        )
+        await proc._run_hooks(proc.on_stop_hooks, phase="on_stop")
+        assert marker.read_text().strip() == "stopped"
+
+    @pytest.mark.asyncio
+    async def test_hook_failure_is_non_fatal(
+        self, workspace: Path, caplog
+    ) -> None:
+        import logging
+        caplog.set_level(logging.WARNING)
+        proc = AgentProcess(
+            workspace=workspace,
+            agent_name="main",
+            on_start_hooks=["false"],
+        )
+        await proc._run_hooks(proc.on_start_hooks, phase="on_start")
+        assert any("on_start hook failed" in rec.message for rec in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_hook_timeout(
+        self, workspace: Path, caplog
+    ) -> None:
+        import logging
+        caplog.set_level(logging.WARNING)
+        proc = AgentProcess(
+            workspace=workspace,
+            agent_name="main",
+            on_start_hooks=["sleep 30"],
+            hook_timeout=0.5,
+        )
+        await proc._run_hooks(proc.on_start_hooks, phase="on_start")
+        assert any("timed out" in rec.message for rec in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_hooks_default_empty(self, workspace: Path) -> None:
+        proc = AgentProcess(workspace=workspace, agent_name="main")
+        assert proc.on_start_hooks == []
+        assert proc.on_stop_hooks == []
+
+    @pytest.mark.asyncio
     async def test_parse_init_event(
         self, workspace: Path
     ) -> None:

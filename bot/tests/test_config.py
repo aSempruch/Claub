@@ -191,6 +191,50 @@ def test_compact_pct_invalid_per_agent(tmp_path: Path) -> None:
         load_config(cfg_file)
 
 
+def test_on_start_global_only(tmp_path: Path) -> None:
+    cfg_file = tmp_path / "agents.yaml"
+    cfg_file.write_text(
+        'on_start: ["echo global-start"]\n'
+        'on_stop: ["echo global-stop"]\n'
+        "agents:\n"
+        "  main:\n"
+        '    channel_id: "123"\n'
+    )
+    config = load_config(cfg_file)
+    assert config.on_start == ["echo global-start"]
+    assert config.on_stop == ["echo global-stop"]
+    assert config.agents["main"].on_start == []
+    assert config.agents["main"].on_stop == []
+
+
+def test_on_start_per_agent_additive(tmp_path: Path) -> None:
+    cfg_file = tmp_path / "agents.yaml"
+    cfg_file.write_text(
+        'on_start: ["echo global"]\n'
+        "agents:\n"
+        "  main:\n"
+        '    channel_id: "123"\n'
+        '    on_start: ["echo local"]\n'
+    )
+    config = load_config(cfg_file)
+    assert config.on_start == ["echo global"]
+    assert config.agents["main"].on_start == ["echo local"]
+
+
+def test_on_start_empty_defaults(tmp_path: Path) -> None:
+    cfg_file = tmp_path / "agents.yaml"
+    cfg_file.write_text(
+        "agents:\n"
+        "  main:\n"
+        '    channel_id: "123"\n'
+    )
+    config = load_config(cfg_file)
+    assert config.on_start == []
+    assert config.on_stop == []
+    assert config.agents["main"].on_start == []
+    assert config.agents["main"].on_stop == []
+
+
 def test_allowed_skills_config(tmp_path: Path) -> None:
     cfg_file = tmp_path / "agents.yaml"
     cfg_file.write_text(

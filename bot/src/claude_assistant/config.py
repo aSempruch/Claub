@@ -31,6 +31,8 @@ class AgentConfig:
     allowed_skills: list[str] = field(default_factory=list)
     effort: str | None = None
     compact_pct: int | None = None
+    on_start: list[str] = field(default_factory=list)
+    on_stop: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -41,6 +43,8 @@ class AssistantConfig:
     allowed_skills: list[str] = field(default_factory=list)
     effort: str | None = None
     compact_pct: int | None = None
+    on_start: list[str] = field(default_factory=list)
+    on_stop: list[str] = field(default_factory=list)
 
 
 def load_config(path: Path) -> AssistantConfig:
@@ -73,6 +77,8 @@ def load_config(path: Path) -> AssistantConfig:
             allowed_skills=(agent_raw or {}).get("allowed_skills") or [],
             effort=agent_effort,
             compact_pct=agent_compact_pct,
+            on_start=(agent_raw or {}).get("on_start") or [],
+            on_stop=(agent_raw or {}).get("on_stop") or [],
         )
 
     if "main" not in agents:
@@ -83,8 +89,19 @@ def load_config(path: Path) -> AssistantConfig:
     allowed_skills = raw.get("allowed_skills") or []
     effort = _validate_effort(raw.get("effort"), "top-level")
     compact_pct = _validate_compact_pct(raw.get("compact_pct"), "top-level")
+    on_start = raw.get("on_start") or []
+    on_stop = raw.get("on_stop") or []
 
-    return AssistantConfig(agents=agents, allowed_user_ids=allowed_user_ids, model=model, allowed_skills=allowed_skills, effort=effort, compact_pct=compact_pct)
+    return AssistantConfig(
+        agents=agents,
+        allowed_user_ids=allowed_user_ids,
+        model=model,
+        allowed_skills=allowed_skills,
+        effort=effort,
+        compact_pct=compact_pct,
+        on_start=on_start,
+        on_stop=on_stop,
+    )
 
 
 def parse_agent_file(path: Path) -> dict[str, str]:

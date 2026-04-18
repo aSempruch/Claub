@@ -4,6 +4,13 @@ effort: high
 allowed_user_ids:
   - "YOUR_DISCORD_USER_ID"
 
+# Global lifecycle hooks — run by AgentProcess around every claude subprocess.
+# Per-agent on_start / on_stop (under each agent) are additive on top of these.
+on_start:
+  - "curl -fsS --max-time 20 -X POST http://host.docker.internal:9500/start/$CLAUB_AGENT_NAME || true"
+on_stop:
+  - "curl -fsS --max-time 10 -X POST http://host.docker.internal:9500/stop/$CLAUB_AGENT_NAME || true"
+
 agents:
   main:
     channel_id: "YOUR_MAIN_CHANNEL_ID"

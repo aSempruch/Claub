@@ -190,24 +190,54 @@ MCP servers give agents access to external tools (APIs, browsers, etc.) without 
 
 **Per-agent** (`/claub/config/agents/{name}.mcp.json`) — additional MCPs for a specific agent only. Both files are passed via `--mcp-config` when the agent runs.
 
-#### Playwright MCP (Host-Side)
+#### Playwright MCP (Host-Side, per-agent)
 
-Playwright runs on the **host** (not inside the container — it needs a browser). The container connects to it via `host.docker.internal`:
+Each agent gets its **own** persistent Playwright browser profile (cookies, localStorage, logins) that survives bot and host restarts, so agents can log into sites once and stay logged in. The architecture has three moving parts:
 
-```bash
-npx @playwright/mcp@latest --port 3846 --host 127.0.0.1
-```
+1. **Per-agent `--user-data-dir`.** Each agent's Playwright MCP process points at `~/docker/claub/playwright-profiles/{agent}/`. Playwright MCP can't multiplex profiles in a single server (issue [#1294](https://github.com/microsoft/playwright-mcp/issues/1294)), so we run one `@playwright/mcp` process per agent on its own port (main=3846, journalist=3847, etc.).
 
-The host must keep this process running (e.g., via launchd, systemd, or a terminal session). The container reaches it at `http://host.docker.internal:3846/mcp`.
+2. **Playwright bridge daemon** (`scripts/playwright-bridge/bridge.py`). A stdlib-only Python HTTP service on the host that spawns / kills the per-agent MCP children on demand. Exposes `POST /start/<agent>`, `POST /stop/<agent>`, `GET /status`. Managed by launchd (`com.asempruch.playwright-bridge.plist`). Unknown agents get a 204 no-op so a global start hook is safe for browser-less agents. See `scripts/playwright-bridge/README.md`.
 
-**Snapshot file sharing:** Agents save Playwright snapshots to `/tmp/playwright/` to keep large accessibility trees out of context. Since Playwright runs on the host, the file is written to the host's `/tmp/playwright/`, which is bind-mounted read-only into the container at the same path. This requires the Docker runtime (e.g., Colima) to mount `/tmp/playwright` into the VM — this is **not** done by default. For Colima, add it to the `mounts` list in `~/.colima/default/colima.yaml`. Docker Desktop for Mac should work out of the box since it shares `/tmp` by default. **This is a portability concern** — new users or different Docker runtimes may need manual mount configuration for snapshot sharing to work.
+3. **Generic on_start / on_stop hooks in `agents.yaml`.** The bot itself knows nothing about Playwright — it just runs shell hooks around each `claude` subprocess (see the "Lifecycle Hooks" section below). The Playwright wiring is entirely in user config:
+
+   ```yaml
+   on_start:
+     - "curl -fsS --max-time 20 -X POST http://host.docker.internal:9500/start/$CLAUB_AGENT_NAME || true"
+   on_stop:
+     - "curl -fsS --max-time 10 -X POST http://host.docker.internal:9500/stop/$CLAUB_AGENT_NAME || true"
+   ```
+
+Per-agent `.mcp.json` files point at that agent's port (e.g. `http://host.docker.internal:3847/mcp`). The shared `/claub/config/mcp.json` does **not** include `playwright`.
+
+**Why pre-spawn, and not Claude Code's own `SessionStart` hook?** Empirically, Claude Code fires its MCP connection handshake **in parallel with** (not after) `SessionStart` — the handshake can land 0.3 s before the hook even starts, and there's no initial-connection retry. So the Playwright MCP must already be listening by the time `claude` is exec'd. That means lifecycle has to run from the bot, not Claude. The on_start hook runs inside `AgentProcess.start()` and blocks on the `curl` to the bridge, which blocks until Playwright's port is listening.
+
+**Snapshot file sharing:** Agents save Playwright snapshots to `/tmp/playwright/` to keep large accessibility trees out of context. Since Playwright runs on the host, the file is written to the host's `/tmp/playwright/`, which is bind-mounted read-only into the container at the same path. This requires the Docker runtime (e.g., Colima) to mount `/tmp/playwright` into the VM — this is **not** done by default. For Colima, add it to the `mounts` list in `~/.colima/default/colima.yaml`. Docker Desktop for Mac should work out of the box since it shares `/tmp` by default.
 
 **File uploads (host-path double mount):** Playwright's `browser_file_upload` tool `fs.stat`s paths on the **host**, so passing a container-only path like `/claub/workspaces/career/resume.pdf` fails with ENOENT. Additionally, Playwright MCP enforces an allowed-roots check using the MCP `roots` capability — Claude Code sends its container cwd as a root, so host-native paths get rejected before `fs.stat` even runs. Two things are needed:
 
-1. **`--allow-unrestricted-file-access`** on the Playwright MCP server — disables the roots-based path restriction so host paths aren't rejected. This flag is configured in the launchd plist (or equivalent service definition).
+1. **`--allow-unrestricted-file-access`** on each Playwright MCP instance (already in `scripts/playwright-bridge/config.example.json`'s `command_template`) — disables the roots-based path restriction so host paths aren't rejected.
 2. **Double mount** in `docker-compose.yml` — the host data directory is bind-mounted at both `/claub` and its native host path via `${CLAUB_DATA_PATH}:${CLAUB_DATA_PATH}`. The container exports `CLAUB_HOST_PATH=${CLAUB_DATA_PATH}` so agents can construct host-valid paths.
 
 Agents use `/claub/...` for everything normally, but swap in `$CLAUB_HOST_PATH/...` when handing a path to Playwright's file-chooser tools — e.g. `/claub/workspaces/career/resume.pdf` becomes `$CLAUB_HOST_PATH/workspaces/career/resume.pdf`, which resolves to e.g. `/Users/you/docker/claub/workspaces/career/resume.pdf` on both sides. Agent-facing documentation lives in `/claub/config/CLAUDE.md`.
+
+### Lifecycle Hooks
+
+`AgentProcess` runs shell commands around the `claude` subprocess. `on_start` hooks run **before** `claude` is exec'd (so any MCP server they spawn is ready when Claude handshakes); `on_stop` hooks run **after** it exits. Hooks are sequential, each subject to a 15 s default timeout; failure or timeout logs a warning but does not abort agent lifecycle.
+
+Configured in `agents.yaml`. Both top-level and per-agent fields accepted; **per-agent hooks are additive on top of global** (same precedent as `allowed_skills`). Each hook is a shell string, so `$CLAUB_AGENT_NAME` interpolates naturally:
+
+```yaml
+on_start:
+  - "curl -fsS --max-time 20 -X POST http://host.docker.internal:9500/start/$CLAUB_AGENT_NAME || true"
+
+agents:
+  career:
+    channel_id: "..."
+    on_start:
+      - "echo career-specific warm-up"
+```
+
+Trailing `|| true` is a common pattern: if the hook target is temporarily down, the agent still starts rather than erroring.
 
 #### Nextcloud File Sharing MCP
 

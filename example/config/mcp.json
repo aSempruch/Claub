@@ -1,9 +1,5 @@
 {
   "mcpServers": {
-    "playwright": {
-      "type": "http",
-      "url": "http://host.docker.internal:3846/mcp"
-    },
     "schedules": {
       "type": "http",
       "url": "http://localhost:9400/mcp",

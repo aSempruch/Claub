@@ -53,6 +53,9 @@ class AgentProcess:
         effort: str | None = None,
         compact_pct: int | None = None,
         debug: bool = False,
+        on_start_hooks: list[str] | None = None,
+        on_stop_hooks: list[str] | None = None,
+        hook_timeout: float = 15.0,
     ) -> None:
         self.workspace = workspace
         self.mcp_configs = mcp_configs or []
@@ -64,6 +67,9 @@ class AgentProcess:
         self.effort = effort
         self.compact_pct = compact_pct
         self.debug = debug
+        self.on_start_hooks = on_start_hooks or []
+        self.on_stop_hooks = on_stop_hooks or []
+        self.hook_timeout = hook_timeout
         self._process: asyncio.subprocess.Process | None = None
         self._session_id: str | None = None
         self._lock = asyncio.Lock()
@@ -148,10 +154,49 @@ class AgentProcess:
             env["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] = str(self.compact_pct)
         return env
 
+    async def _run_hooks(self, hooks: list[str], phase: str) -> None:
+        """Run shell hooks sequentially. Failures are logged, never raised."""
+        for hook in hooks:
+            log.info("Running %s hook for %s: %s", phase, self.agent_name, hook)
+            try:
+                hp = await asyncio.create_subprocess_shell(
+                    hook,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    env=self._env(),
+                )
+                try:
+                    _, stderr = await asyncio.wait_for(
+                        hp.communicate(), timeout=self.hook_timeout
+                    )
+                except asyncio.TimeoutError:
+                    hp.kill()
+                    await hp.wait()
+                    log.warning(
+                        "%s hook timed out after %.1fs (agent=%s): %s",
+                        phase, self.hook_timeout, self.agent_name, hook,
+                    )
+                    continue
+                if hp.returncode != 0:
+                    log.warning(
+                        "%s hook failed (rc=%d, agent=%s): %s\nstderr: %s",
+                        phase, hp.returncode, self.agent_name, hook,
+                        stderr.decode(errors="replace").strip(),
+                    )
+                else:
+                    log.debug(
+                        "%s hook ok (agent=%s): %s", phase, self.agent_name, hook,
+                    )
+            except Exception:
+                log.exception(
+                    "%s hook raised (agent=%s): %s", phase, self.agent_name, hook,
+                )
+
     async def start(self, session_id: str | None = None) -> None:
         """Start the claude process. Session ID is captured lazily from stream events."""
         async with self._lifecycle_lock:
             self._ready.clear()
+            await self._run_hooks(self.on_start_hooks, phase="on_start")
             cmd = self._build_command(session_id)
             log.info("Starting agent %s: %s", self.agent_name or "unnamed", " ".join(cmd))
             self._process = await asyncio.create_subprocess_exec(
@@ -277,3 +322,4 @@ class AgentProcess:
                 except asyncio.TimeoutError:
                     self._process.kill()
             self._ready.clear()
+            await self._run_hooks(self.on_stop_hooks, phase="on_stop")

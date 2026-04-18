@@ -1,0 +1,26 @@
+{
+  "listen_host": "127.0.0.1",
+  "listen_port": 9500,
+  "command_template": [
+    "/opt/homebrew/bin/npx",
+    "@playwright/mcp@latest",
+    "--snapshot-mode=none",
+    "--image-responses=omit",
+    "--console-level=error",
+    "--host", "127.0.0.1",
+    "--port", "{port}",
+    "--allowed-hosts", "host.docker.internal:{port},localhost:{port}",
+    "--init-script", "/Users/you/Library/Application Support/playwright-mcp/init.js",
+    "--config", "/Users/you/Library/Application Support/playwright-mcp/config.json",
+    "--allow-unrestricted-file-access",
+    "--user-data-dir", "{user_data_dir}"
+  ],
+  "agents": {
+    "main":               { "port": 3846, "user_data_dir": "/Users/you/Library/Application Support/claub-playwright-bridge/profiles/main" },
+    "journalist":         { "port": 3847, "user_data_dir": "/Users/you/Library/Application Support/claub-playwright-bridge/profiles/journalist" },
+    "career":             { "port": 3848, "user_data_dir": "/Users/you/Library/Application Support/claub-playwright-bridge/profiles/career" },
+    "shopping-assistant": { "port": 3849, "user_data_dir": "/Users/you/Library/Application Support/claub-playwright-bridge/profiles/shopping-assistant" },
+    "planner":       { "port": 3850, "user_data_dir": "/Users/you/Library/Application Support/claub-playwright-bridge/profiles/planner" },
+    "leetcode-coach":     { "port": 3851, "user_data_dir": "/Users/you/Library/Application Support/claub-playwright-bridge/profiles/leetcode-coach" }
+  }
+}

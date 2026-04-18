@@ -23,6 +23,14 @@ from claude_assistant.session import SessionStore
 log = logging.getLogger(__name__)
 
 
+def _merged_hooks(config: AssistantConfig, agent_name: str, attr: str) -> list[str]:
+    """Concatenate global and per-agent hook lists (global first)."""
+    global_hooks: list[str] = list(getattr(config, attr, []) or [])
+    agent_cfg = config.agents.get(agent_name)
+    agent_hooks: list[str] = list(getattr(agent_cfg, attr, []) or []) if agent_cfg else []
+    return global_hooks + agent_hooks
+
+
 def _ensure_authoring_symlink(workspace: Path, name: str) -> None:
     """Set up agent self-authoring: real dir at .claude-{name}/, symlink at .claude/{name}/.
 
@@ -79,6 +87,8 @@ def build_agent_process(
         effort=effort,
         compact_pct=compact_pct,
         debug=debug,
+        on_start_hooks=_merged_hooks(config, name, "on_start"),
+        on_stop_hooks=_merged_hooks(config, name, "on_stop"),
     )
 
 
