@@ -28,6 +28,7 @@ AssistantBot (discord.py)
 
 - **Persistent streaming** — each agent runs as a long-lived `stream-json` process, not one-shot invocations. Internal asyncio locks serialize communication on the pipe.
 - **Lazy startup with supervision** — processes start on first message or scheduled trigger. A supervisor restarts dead processes; an idle reaper kills inactive ones after 10 minutes to prevent stale OAuth tokens.
+- **Per-agent persistent Playwright sessions** — each agent has its own browser profile (cookies, localStorage, saved logins) that survives bot and host restarts. Log into a site once as one agent and stay logged in; other agents on the same site are cleanly isolated. Implemented via a host-side bridge daemon and generic `on_start` / `on_stop` lifecycle hooks in `agents.yaml` — the bot itself stays Playwright-agnostic.
 - **Three-level agent configuration** — global rules (Level 1), agent identity (Level 2), and workspace living config that agents can self-modify (Level 3). See [`example/`](example/) for the full pattern.
 - **File-based agent memory** — agents maintain their own memory in workspace directories with mandatory startup reads, write-time pruning, and bounded growth.
 - **Human-like scheduling** — agents use one-shot schedules with natural time variation instead of rigid cron. A lognormal jitter model and beta-distributed skip probability make agent check-ins feel organic.
@@ -82,7 +83,7 @@ cd bot
 uv run --extra dev pytest tests/ -v --ignore=tests/test_integration.py
 ```
 
-148 tests covering process management, scheduling, density validation, MCP tools, message chunking, routing, and session persistence.
+162 tests covering process management, scheduling, density validation, MCP tools, message chunking, routing, session persistence, and the Playwright bridge.
 
 ## License
 
