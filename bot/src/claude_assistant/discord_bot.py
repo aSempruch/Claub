@@ -50,6 +50,38 @@ def _ensure_authoring_symlink(workspace: Path, name: str) -> None:
         link.symlink_to(f"../.claude-{name}")
 
 
+def build_agent_process(
+    *,
+    name: str,
+    workspace: Path,
+    config: AssistantConfig,
+    mcp_configs: list[Path],
+    agent_definition: dict[str, str] | None,
+    disallowed_skills: list[str],
+    debug: bool = False,
+) -> AgentProcess:
+    """Build an AgentProcess with production-matching flags.
+
+    Used by both the Discord bot's normal startup path and the debug CLI so
+    the command construction stays in one place.
+    """
+    agent_config = config.agents.get(name)
+    effort = (agent_config.effort if agent_config and agent_config.effort else config.effort)
+    compact_pct = (agent_config.compact_pct if agent_config and agent_config.compact_pct else config.compact_pct)
+    return AgentProcess(
+        workspace=workspace,
+        mcp_configs=mcp_configs,
+        agent_name=name,
+        agent_definition=agent_definition,
+        allowed_tools_additional=agent_config.allowed_tools_additional if agent_config else [],
+        model=config.model,
+        disallowed_skills=disallowed_skills,
+        effort=effort,
+        compact_pct=compact_pct,
+        debug=debug,
+    )
+
+
 class AssistantBot:
     def __init__(
         self,
@@ -141,19 +173,13 @@ class AssistantBot:
         workspace.mkdir(parents=True, exist_ok=True)
         _ensure_authoring_symlink(workspace, "skills")
         _ensure_authoring_symlink(workspace, "agents")
-        agent_config = self.config.agents.get(name)
-        effort = (agent_config.effort if agent_config and agent_config.effort else self.config.effort)
-        compact_pct = (agent_config.compact_pct if agent_config and agent_config.compact_pct else self.config.compact_pct)
-        process = AgentProcess(
+        process = build_agent_process(
+            name=name,
             workspace=workspace,
+            config=self.config,
             mcp_configs=self._mcp_configs_for(name),
-            agent_name=name,
             agent_definition=self._load_agent_definition(name),
-            allowed_tools_additional=agent_config.allowed_tools_additional if agent_config else [],
-            model=self.config.model,
             disallowed_skills=self._disallowed_skills_for(name),
-            effort=effort,
-            compact_pct=compact_pct,
         )
         session_id = self.sessions.get(name)
         try:

@@ -320,28 +320,20 @@ CLAUDE_INTEGRATION_TEST=1 uv run --extra dev pytest tests/test_integration.py -v
 
 ### Testing Claude CLI Directly
 
-Always pass `--no-session-persistence` when testing to avoid creating stale sessions that interfere with the bot's session management.
+Use the debug CLI (`claude_assistant.debug_agent`) to talk to an agent with its full production config (agent definition, per-agent MCP configs, allowed/disallowed tools, model, effort) without touching `sessions.json`. Debug mode drops `--resume` and adds `--no-session-persistence`, so every run is a fresh session.
 
-Quick auth check:
+```bash
+# Replace {name} with an agent name from agents.yaml (e.g. main, career, journalist)
+docker exec claude-claub-1 uv run --project /app/bot python -m claude_assistant.debug_agent {name} -p "your prompt here"
+```
+
+The CLI also supports interactive stdin mode (omit `-p`) for manual back-and-forth sessions.
+
+Raw `claude` fallback (skips the bot's config — useful for isolating whether an issue is in the CLI itself vs. the bot wiring):
 
 ```bash
 docker exec claude-claub-1 claude -p "say hello" --no-session-persistence
 ```
-
-One-shot prompt test (matches production config — same workspace, permissions, and MCP servers):
-
-```bash
-# Replace {name} with agent name (e.g. main, career, journalist)
-docker exec claude-claub-1 bash -c 'cd /claub/workspaces/{name} && claude -p "your prompt here" --permission-mode acceptEdits --mcp-config /claub/config/mcp.json --no-session-persistence'
-```
-
-Interactive session:
-
-```bash
-docker exec -it claude-claub-1 bash -c 'cd /claub/workspaces/{name} && claude --permission-mode acceptEdits --mcp-config /claub/config/mcp.json --no-session-persistence'
-```
-
-Note: production agents also get `--agents` (agent definition JSON), `--agent` (agent name), per-agent MCP configs, `--allowedTools`, `--disallowedTools`, `--model`, and `--effort` flags set by `AgentProcess._build_command()`. The above commands omit these for brevity — add them if the test depends on agent identity or tool restrictions.
 
 ### Key Design Decisions
 

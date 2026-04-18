@@ -52,6 +52,7 @@ class AgentProcess:
         disallowed_skills: list[str] | None = None,
         effort: str | None = None,
         compact_pct: int | None = None,
+        debug: bool = False,
     ) -> None:
         self.workspace = workspace
         self.mcp_configs = mcp_configs or []
@@ -62,6 +63,7 @@ class AgentProcess:
         self.disallowed_skills = disallowed_skills or []
         self.effort = effort
         self.compact_pct = compact_pct
+        self.debug = debug
         self._process: asyncio.subprocess.Process | None = None
         self._session_id: str | None = None
         self._lock = asyncio.Lock()
@@ -109,7 +111,9 @@ class AgentProcess:
             cmd.extend(["--model", self.model])
         if self.effort:
             cmd.extend(["--effort", self.effort])
-        if session_id:
+        if self.debug:
+            cmd.append("--no-session-persistence")
+        elif session_id:
             cmd.extend(["--resume", session_id])
         return cmd
 
