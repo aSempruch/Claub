@@ -1,6 +1,7 @@
 import asyncio
 import pytest
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from claude_assistant.discord_bot import AssistantBot
 from claude_assistant.config import AssistantConfig, AgentConfig
@@ -103,3 +104,58 @@ async def test_handle_reset_unknown_channel(bot: AssistantBot) -> None:
     msg.channel.send = AsyncMock()
     await bot._handle_reset(msg)
     bot.sessions.delete.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_handle_agent_message_appends_attachment_footer(
+    bot: AssistantBot, tmp_path: Path
+) -> None:
+    """When a Discord message has attachments, the bot downloads them and
+    appends a footer to the content passed to the agent process."""
+    captured: dict[str, str] = {}
+
+    async def fake_send_with_restart(agent_name: str, content: str) -> str:
+        captured["agent"] = agent_name
+        captured["content"] = content
+        return "ok"
+
+    # FakeAttachment mirrors discord.Attachment surface; writes payload on save.
+    class FakeAttachment:
+        def __init__(self) -> None:
+            self.filename = "hi.txt"
+            self.size = 5
+            self.content_type = "text/plain"
+
+        async def save(self, fp: Any) -> int:
+            Path(fp).write_bytes(b"hello")
+            return 5
+
+    msg = MagicMock()
+    msg.channel.id = 100  # routes to "main"
+    msg.channel.send = AsyncMock()
+    # Need a real async-context-manager for `async with channel.typing()`
+    typing_cm = AsyncMock()
+    typing_cm.__aenter__ = AsyncMock(return_value=None)
+    typing_cm.__aexit__ = AsyncMock(return_value=None)
+    msg.channel.typing = MagicMock(return_value=typing_cm)
+    msg.id = 555
+    msg.attachments = [FakeAttachment()]
+
+    # Patch session lookup to a no-op
+    bot.sessions.get = MagicMock(return_value=None)
+    # Patch the attachments base dir to tmp_path so we don't write to /tmp
+    import claude_assistant.attachments as _att
+    real_download = _att.download_attachments
+    async def patched_download(m, a):
+        return await real_download(m, a, base_dir=tmp_path)
+    with patch("claude_assistant.discord_bot.download_attachments", side_effect=patched_download):
+        with patch.object(bot, "_send_with_restart", side_effect=fake_send_with_restart):
+            with patch.object(bot, "_send_chunked", new=AsyncMock()):
+                await bot._handle_agent_message(msg, "main", "hello agent")
+
+    assert captured["agent"] == "main"
+    assert captured["content"].startswith("hello agent")
+    assert "[Attachments" in captured["content"]
+    assert "hi.txt" in captured["content"]
+    # File was actually written to the patched base_dir
+    assert (tmp_path / "main" / "555" / "hi.txt").read_bytes() == b"hello"

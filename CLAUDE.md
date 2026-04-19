@@ -276,10 +276,11 @@ The container provides isolation — no macOS Seatbelt sandbox needed. Agents ru
 
 1. User sends message in Discord
 2. Router checks channel ID → agent name (or ignores if unknown channel)
-3. Bot gets or starts the agent's persistent stream-json process (lazy startup)
-4. Message sent to process via stdin, response read from stdout events until `type: result`
-5. On process error: restart and retry once. On auth error: notify user.
-6. Response chunked at newline boundaries (max 2000 chars) and sent back
+3. If the message has Discord attachments, the bot downloads each to `/tmp/claub-attachments/{agent}/{message_id}/{sanitized_filename}` and appends a footer to the message text listing the paths, MIME types, and sizes. Failures are surfaced as `(failed: …)` lines in the footer rather than aborting the send. Files live in container `/tmp` and are wiped when the container is rebuilt (a plain `docker compose restart` does not clear them); agents move them into their workspace if they want to keep them.
+4. Bot gets or starts the agent's persistent stream-json process (lazy startup)
+5. Message sent to process via stdin, response read from stdout events until `type: result`
+6. On process error: restart and retry once. On auth error: notify user.
+7. Response chunked at newline boundaries (max 2000 chars) and sent back
 
 ### Commands
 

@@ -9,6 +9,7 @@ from pathlib import Path
 
 import discord
 
+from claude_assistant.attachments import download_attachments
 from claude_assistant.chunker import chunk_message
 from claude_assistant.claude_process import AgentProcess, AuthenticationError
 from claude_assistant.config import AssistantConfig, parse_agent_file
@@ -297,6 +298,9 @@ class AssistantBot:
         self, message: discord.Message, agent_name: str, content: str
     ) -> None:
         async with message.channel.typing():
+            footer = await download_attachments(message, agent_name)
+            if footer:
+                content = (content + footer) if content else footer.lstrip()
             try:
                 result = await self._send_with_restart(agent_name, content)
             except AuthenticationError:

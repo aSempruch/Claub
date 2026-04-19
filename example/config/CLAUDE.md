@@ -77,6 +77,12 @@ Here's the chart you asked for:
 
 The path must be an absolute path to a file that exists inside the container. Your workspace files at `/claub/workspaces/{your-agent-name}/` are the most common source. Files in `/tmp/` also work.
 
+### Receiving attachments
+
+When a user attaches files to a Discord message, the bot downloads them and appends a footer to the message listing each file's path. Read them with the normal `Read` tool.
+
+The files live in `/tmp` and are cleared on the next deploy — `mv` them into your workspace if you want to keep them.
+
 ### Opting out of posting
 
 Scheduled (cron) tasks are prefixed with `[scheduled]` in the prompt. When you see this prefix and decide there is nothing worth posting — e.g. no new information, nothing has changed, or the update would be noise — include `[NO_POST]` in your response. If `[NO_POST]` appears anywhere in your response, the entire message is suppressed and nothing will be sent to Discord.
