@@ -201,6 +201,7 @@ class AssistantBot:
                 self.sessions.delete(name)
                 await process.start(None)
         self._processes[name] = process
+        self._reaped.discard(name)
         return process
 
     async def _get_or_start_process(self, name: str) -> AgentProcess:
@@ -226,6 +227,8 @@ class AssistantBot:
                     if not process.is_alive and name not in self._reaped:
                         log.warning("Agent %s died unexpectedly", name)
                         await self._notify_channel(name, f"Agent `{name}` died. Send a message to restart it.")
+                        del self._processes[name]
+                        self._last_activity.pop(name, None)
         except asyncio.CancelledError:
             log.info("Supervisor loop cancelled")
             return
@@ -311,7 +314,6 @@ class AssistantBot:
 
     async def _send_with_restart(self, agent_name: str, content: str) -> str:
         """Send a message to an agent, restarting the process on failure."""
-        self._reaped.discard(agent_name)
         self._last_activity[agent_name] = time.monotonic()
         process = await self._get_or_start_process(agent_name)
         try:
@@ -319,6 +321,8 @@ class AssistantBot:
         except AuthenticationError:
             raise
         except RuntimeError:
+            if agent_name in self._reaped:
+                raise
             log.exception("Agent %s error, restarting", agent_name)
             process = await self._restart_process(agent_name)
             result = await process.send_message(content)
@@ -367,12 +371,12 @@ class AssistantBot:
         if agent_name is None:
             return
 
+        self._reaped.add(agent_name)
         process = self._processes.get(agent_name)
         if process:
             await process.stop()
             del self._processes[agent_name]
         self._last_activity.pop(agent_name, None)
-        self._reaped.discard(agent_name)
         self.sessions.delete(agent_name)
         await message.channel.send(f"Agent `{agent_name}` reset.")
 
@@ -381,12 +385,12 @@ class AssistantBot:
         if agent_name is None:
             return
 
+        self._reaped.add(agent_name)
         process = self._processes.get(agent_name)
         if process:
             await process.stop()
             del self._processes[agent_name]
         self._last_activity.pop(agent_name, None)
-        self._reaped.discard(agent_name)
         await message.channel.send(f"Agent `{agent_name}` stopped.")
 
     # --- Webhook sending ---
