@@ -108,6 +108,54 @@ async def get_user_location_history(hours: int = 24) -> str:
 
 
 @mcp.tool()
+async def get_user_screen_activity() -> str:
+    """Check whether the user is watching the living room TV or playing on his gaming PC.
+
+    Returns the current state of both screens together so the agent can see at a
+    glance whether the user is engaged in entertainment.
+
+    For each screen:
+    - state: media_player state — "off", "idle", "paused", "playing", "on", etc.
+              "off" means the screen is not in use.
+    - last_changed: when state last transitioned (use to estimate session length).
+
+    Living room TV adds:
+    - title: what's currently playing (video/show/movie title)
+    - artist: channel name or artist (e.g. YouTube channel)
+    - app: streaming app driving the TV (e.g. "SmartTube", "Netflix")
+    - duration_seconds / position_seconds: progress through current item
+
+    Gaming PC adds:
+    - running_game: title of the currently running game (null when nothing is running)
+    - platform: "Steam", "Steam Shortcut", "Custom", etc.
+    """
+    tv = await _get_state("media_player.lr_tv")
+    pc = await _get_state("media_player.gaming_pc")
+    tv_attrs = tv.get("attributes", {})
+    pc_attrs = pc.get("attributes", {})
+    return json.dumps(
+        {
+            "tv": {
+                "state": tv.get("state"),
+                "title": tv_attrs.get("media_title"),
+                "artist": tv_attrs.get("media_artist"),
+                "app": tv_attrs.get("app_name"),
+                "duration_seconds": tv_attrs.get("media_duration"),
+                "position_seconds": tv_attrs.get("media_position"),
+                "last_changed": tv.get("last_changed"),
+            },
+            "gaming_pc": {
+                "state": pc.get("state"),
+                "running_game": pc_attrs.get("running_game"),
+                "platform": pc_attrs.get("running_platform"),
+                "last_changed": pc.get("last_changed"),
+            },
+        },
+        indent=2,
+    )
+
+
+@mcp.tool()
 async def broadcast(message: str) -> str:
     """Speak a TTS message aloud on the home's smart speakers.
 
