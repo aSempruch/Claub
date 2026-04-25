@@ -43,6 +43,7 @@ AssistantBot (discord.py)
 | [`mcps/git/`](mcps/git/) | Workspace-scoped git operations with path containment validation (15 tools) |
 | [`mcps/leetcode-stats/`](mcps/leetcode-stats/) | LeetCode GraphQL API client — stats, cloud code, submissions (4 tools, with tests) |
 | [`mcps/nextcloud/`](mcps/nextcloud/) | Nextcloud file sharing via WebDAV with TTL-based ephemeral cleanup (4 tools) |
+| [`mcps/hass/`](mcps/hass/) | Home Assistant — a deliberately narrow allowlist of typed wrappers around specific entities and services (3 tools) |
 
 ## Example Agents
 

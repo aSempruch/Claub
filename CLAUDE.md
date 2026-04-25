@@ -251,6 +251,16 @@ A subprocess MCP server (like git) at `/app/mcps/nextcloud/` in the container th
 
 **Cleanup:** Runs automatically on process startup. Can also be triggered manually via `cleanup_ephemeral` tool.
 
+#### Home Assistant MCP
+
+A subprocess MCP server at `/app/mcps/hass/` exposing a small, hand-picked slice of Home Assistant. Not a general HASS bridge — each tool is a typed wrapper around one entity or service, by design. Adding a new capability means writing a new `@mcp.tool()` function so the agent gets a dedicated, well-described tool rather than a generic "call_service" with stringly-typed args.
+
+**Setup:** Set `HASS_URL` and `HASS_TOKEN` (long-lived access token from HA Profile > Security) in `.env`.
+
+**Tools:** `mcp__hass__get_user_location`, `mcp__hass__get_user_location_history`, `mcp__hass__broadcast`.
+
+**Extending:** Edit `mcps/hass/server.py` and add a new `@mcp.tool()` function. Use `_get_state(entity_id)`, `_get_history(entity_id, hours)`, or `_call_service(domain, service, payload)` as helpers — they handle the auth and HTTP. Shape the response so the agent gets only the fields it needs, not raw HASS state JSON. Then add the new tool to `settings.json`'s allow list (it's already covered by `mcp__hass__*`).
+
 #### Custom MCP Servers
 
 Custom MCP servers live in `/claub/mcps/` (bind-mounted from host). The entrypoint automatically runs `uv sync` for any subdirectory containing a `pyproject.toml` on every container start, so Python-based MCPs are always ready.

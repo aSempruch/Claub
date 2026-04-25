@@ -8,6 +8,8 @@ services:
       - NEXTCLOUD_URL=${NEXTCLOUD_URL}
       - NEXTCLOUD_LOGIN=${NEXTCLOUD_LOGIN}
       - NEXTCLOUD_TOKEN=${NEXTCLOUD_TOKEN}
+      - HASS_URL=${HASS_URL}
+      - HASS_TOKEN=${HASS_TOKEN}
       - TZ=${TZ:-America/New_York}
       - CLAUB_HOST_PATH=${CLAUB_DATA_PATH}
     volumes:

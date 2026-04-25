@@ -14,6 +14,10 @@
     "git": {
       "command": "uv",
       "args": ["--directory", "/app/mcps/git", "run", "server.py"]
+    },
+    "hass": {
+      "command": "uv",
+      "args": ["--directory", "/app/mcps/hass", "run", "server.py"]
     }
   }
 }
