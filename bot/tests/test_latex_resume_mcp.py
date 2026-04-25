@@ -128,3 +128,25 @@ class TestCompileLatex:
         result = json.loads(self.compile_latex("../../etc/passwd.tex"))
         assert result["success"] is False
         assert "escapes" in result["error"]
+
+    @patch("server.subprocess.run")
+    def test_artifacts_cleaned_up_on_success(self, mock_run):
+        self.pdf_file.write_text("fake pdf")
+        for ext in (".aux", ".log", ".out", ".toc"):
+            (self.tex_file.parent / f"main{ext}").write_text("junk")
+        mock_run.return_value = MagicMock(
+            stdout="Output written on main.pdf (1 page, 52345 bytes).",
+            stderr="",
+        )
+        result = json.loads(self.compile_latex("main.tex"))
+        assert result["success"] is True
+        for ext in (".aux", ".log", ".out", ".toc"):
+            assert not (self.tex_file.parent / f"main{ext}").exists()
+        assert self.pdf_file.exists()
+
+    @patch("server.subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="pdflatex", timeout=30))
+    def test_artifacts_cleaned_up_on_timeout(self, mock_run):
+        (self.tex_file.parent / "main.aux").write_text("junk")
+        result = json.loads(self.compile_latex("main.tex"))
+        assert result["success"] is False
+        assert not (self.tex_file.parent / "main.aux").exists()

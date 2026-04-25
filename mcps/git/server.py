@@ -113,9 +113,10 @@ def diff(repo_path: str = ".", staged: bool = False, path: str | None = None) ->
 
 
 @mcp.tool()
-def show(repo_path: str = ".", ref: str = "HEAD") -> str:
-    """Show a commit (default HEAD)."""
-    return _call(repo_path, ["show", ref])
+def show(repo_path: str = ".", ref: str = "HEAD", path: str | None = None) -> str:
+    """Show a commit (default HEAD), or a single file at that ref when path is given."""
+    target = f"{ref}:{path}" if path else ref
+    return _call(repo_path, ["show", target])
 
 
 @mcp.tool()
