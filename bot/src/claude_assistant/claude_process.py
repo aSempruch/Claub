@@ -55,6 +55,7 @@ class AgentProcess:
         debug: bool = False,
         on_start_hooks: list[str] | None = None,
         on_stop_hooks: list[str] | None = None,
+        can_stop_hooks: list[str] | None = None,
         hook_timeout: float = 15.0,
     ) -> None:
         self.workspace = workspace
@@ -69,6 +70,7 @@ class AgentProcess:
         self.debug = debug
         self.on_start_hooks = on_start_hooks or []
         self.on_stop_hooks = on_stop_hooks or []
+        self.can_stop_hooks = can_stop_hooks or []
         self.hook_timeout = hook_timeout
         self._process: asyncio.subprocess.Process | None = None
         self._session_id: str | None = None
@@ -191,6 +193,42 @@ class AgentProcess:
                 log.exception(
                     "%s hook raised (agent=%s): %s", phase, self.agent_name, hook,
                 )
+
+    async def can_stop(self) -> bool:
+        """Run can_stop hooks. Return False (veto) if any exits non-zero or times out."""
+        for hook in self.can_stop_hooks:
+            try:
+                hp = await asyncio.create_subprocess_shell(
+                    hook,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    env=self._env(),
+                )
+                try:
+                    _, stderr = await asyncio.wait_for(
+                        hp.communicate(), timeout=self.hook_timeout
+                    )
+                except asyncio.TimeoutError:
+                    hp.kill()
+                    await hp.wait()
+                    log.warning(
+                        "can_stop hook timed out after %.1fs (agent=%s): %s — vetoing",
+                        self.hook_timeout, self.agent_name, hook,
+                    )
+                    return False
+                if hp.returncode != 0:
+                    log.info(
+                        "can_stop hook vetoed reap (rc=%d, agent=%s): %s",
+                        hp.returncode, self.agent_name, hook,
+                    )
+                    return False
+            except Exception:
+                log.exception(
+                    "can_stop hook raised (agent=%s): %s — vetoing",
+                    self.agent_name, hook,
+                )
+                return False
+        return True
 
     async def start(self, session_id: str | None = None) -> None:
         """Start the claude process. Session ID is captured lazily from stream events."""

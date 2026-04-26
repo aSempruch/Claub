@@ -105,6 +105,37 @@ def stop_agent(name: str) -> tuple[int, str]:
     return 200, json.dumps({"status": "stopped"})
 
 
+def can_stop_agent(name: str) -> tuple[int, str]:
+    """Return 200 if no Chrome procs reference the agent's profile dir, else 423."""
+    agent_cfg = CONFIG.get("agents", {}).get(name)
+    if not agent_cfg:
+        return 200, json.dumps({"can_stop": True, "reason": "no-config"})
+    user_data_dir = agent_cfg.get("user_data_dir")
+    if not user_data_dir:
+        return 200, json.dumps({"can_stop": True, "reason": "no-user-data-dir"})
+    needle = f"--user-data-dir={user_data_dir} "
+    try:
+        out = subprocess.check_output(
+            ["ps", "-A", "-ww", "-o", "pid=,command="],
+            text=True,
+            timeout=5,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        log.warning("can-stop %s: ps failed: %s", name, e)
+        return 503, json.dumps({"error": "ps failed"})
+    pids: list[str] = []
+    for line in out.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        pid, _, cmd = line.partition(" ")
+        if needle in cmd:
+            pids.append(pid)
+    if pids:
+        return 423, json.dumps({"can_stop": False, "chrome_pids": pids})
+    return 200, json.dumps({"can_stop": True})
+
+
 def status() -> str:
     out: dict[str, dict] = {}
     with STATE_LOCK:
@@ -141,6 +172,11 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         if self.path.rstrip("/") == "/status":
             self._send(200, status())
+            return
+        parts = self.path.strip("/").split("/")
+        if len(parts) == 2 and parts[0] == "can-stop":
+            code, body = can_stop_agent(parts[1])
+            self._send(code, body)
             return
         self._send(404, json.dumps({"error": "unknown path"}))
 

@@ -33,6 +33,7 @@ class AgentConfig:
     compact_pct: int | None = None
     on_start: list[str] = field(default_factory=list)
     on_stop: list[str] = field(default_factory=list)
+    can_stop: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -45,6 +46,7 @@ class AssistantConfig:
     compact_pct: int | None = None
     on_start: list[str] = field(default_factory=list)
     on_stop: list[str] = field(default_factory=list)
+    can_stop: list[str] = field(default_factory=list)
 
 
 def load_config(path: Path) -> AssistantConfig:
@@ -79,6 +81,7 @@ def load_config(path: Path) -> AssistantConfig:
             compact_pct=agent_compact_pct,
             on_start=(agent_raw or {}).get("on_start") or [],
             on_stop=(agent_raw or {}).get("on_stop") or [],
+            can_stop=(agent_raw or {}).get("can_stop") or [],
         )
 
     if "main" not in agents:
@@ -91,6 +94,7 @@ def load_config(path: Path) -> AssistantConfig:
     compact_pct = _validate_compact_pct(raw.get("compact_pct"), "top-level")
     on_start = raw.get("on_start") or []
     on_stop = raw.get("on_stop") or []
+    can_stop = raw.get("can_stop") or []
 
     return AssistantConfig(
         agents=agents,
@@ -101,6 +105,7 @@ def load_config(path: Path) -> AssistantConfig:
         compact_pct=compact_pct,
         on_start=on_start,
         on_stop=on_stop,
+        can_stop=can_stop,
     )
 
 

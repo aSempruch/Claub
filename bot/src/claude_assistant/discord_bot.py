@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import random
 import signal
 import time
@@ -90,6 +91,7 @@ def build_agent_process(
         debug=debug,
         on_start_hooks=_merged_hooks(config, name, "on_start"),
         on_stop_hooks=_merged_hooks(config, name, "on_stop"),
+        can_stop_hooks=_merged_hooks(config, name, "can_stop"),
     )
 
 
@@ -125,7 +127,9 @@ class AssistantBot:
         self._shutting_down = False
         self._last_activity: dict[str, float] = {}  # agent name -> timestamp
         self._reaped: set[str] = set()  # agents intentionally killed by idle reaper
+        self._veto_pin_started: dict[str, float] = {}  # agent -> first-veto monotonic ts
         # Per-process reap threshold is set in AgentProcess.__init__ (lognormal, median ~40 min)
+        self._max_pin_secs = float(os.environ.get("CLAUB_MAX_PIN_SECS", "172800"))
 
         intents = discord.Intents.default()
         intents.message_content = True
@@ -245,19 +249,36 @@ class AssistantBot:
                         continue
                     last = self._last_activity.get(name, 0)
                     idle_secs = now - last if last else 0
-                    if last and idle_secs > process.reap_threshold and not process.busy:
-                        # Random delay so kill times don't land on round minutes
-                        await asyncio.sleep(random.uniform(0, 60))
-                        # Re-check: a message may have arrived during the delay
-                        if process.busy:
+                    if not (last and idle_secs > process.reap_threshold and not process.busy):
+                        self._veto_pin_started.pop(name, None)
+                        continue
+                    # Random delay so kill times don't land on round minutes
+                    await asyncio.sleep(random.uniform(0, 60))
+                    # Re-check: a message may have arrived during the delay
+                    if process.busy:
+                        self._veto_pin_started.pop(name, None)
+                        continue
+                    if not await process.can_stop():
+                        pin_start = self._veto_pin_started.setdefault(name, now)
+                        pinned_for = now - pin_start
+                        if pinned_for <= self._max_pin_secs:
+                            log.info(
+                                "Reap of %s vetoed by can_stop hook (pinned %.0fs/%.0fs)",
+                                name, pinned_for, self._max_pin_secs,
+                            )
                             continue
-                        log.info(
-                            "Reaping idle agent %s (idle %.0fs, threshold %.0fs)",
-                            name, idle_secs, process.reap_threshold,
+                        log.warning(
+                            "Reap of %s proceeding despite veto (pinned %.0fs > cap %.0fs)",
+                            name, pinned_for, self._max_pin_secs,
                         )
-                        self._reaped.add(name)
-                        await process.stop()
-                        del self._processes[name]
+                    self._veto_pin_started.pop(name, None)
+                    log.info(
+                        "Reaping idle agent %s (idle %.0fs, threshold %.0fs)",
+                        name, idle_secs, process.reap_threshold,
+                    )
+                    self._reaped.add(name)
+                    await process.stop()
+                    del self._processes[name]
         except asyncio.CancelledError:
             log.info("Idle reaper cancelled")
             return
