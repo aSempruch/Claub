@@ -152,6 +152,9 @@ class AgentProcess:
         # Neutralize git's interactive editor so `rebase -i`, `commit` without
         # -m, etc. don't hang waiting on stdin.
         env["GIT_EDITOR"] = "true"
+        # Background Task/Agent and Monitor would emit stream events after the
+        # parent's `result`, which our one-turn-one-result reader can't surface.
+        env["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] = "1"
         if self.compact_pct is not None:
             env["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] = str(self.compact_pct)
         return env
