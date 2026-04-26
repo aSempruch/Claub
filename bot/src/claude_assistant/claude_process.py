@@ -22,6 +22,20 @@ def _check_auth_error(text: str) -> None:
         raise AuthenticationError(f"Claude authentication failed: {text[:200]}")
 
 
+REPLY_SENTINEL = "[REPLY]"
+
+
+def _apply_reply_sentinel(text: str) -> str:
+    """If the agent included [REPLY], post only the text after the last occurrence.
+
+    Lets the agent treat earlier text as scratch (planning, intermediate narration)
+    and designate the final user-facing answer. Absent the marker, return text as-is.
+    """
+    if REPLY_SENTINEL in text:
+        return text.rsplit(REPLY_SENTINEL, 1)[1].strip()
+    return text
+
+
 def _check_error_event(event: dict) -> None:
     """Raise on error-type JSON events from the Claude CLI."""
     if event.get("type") == "error":
@@ -328,23 +342,18 @@ class AgentProcess:
             if self._is_result_event(event):
                 result_text = self._extract_result(event)
                 if not collected_text:
-                    return result_text
-                # The result field only has text from the last turn.
-                # If earlier turns produced text not in result, prepend it.
-                if result_text and result_text.strip() == collected_text[-1]:
-                    # Result matches only the last text block — include earlier ones
-                    if len(collected_text) > 1:
-                        return "\n\n".join(collected_text)
-                    return result_text
+                    final = result_text
+                elif result_text and result_text.strip() == collected_text[-1]:
+                    final = "\n\n".join(collected_text) if len(collected_text) > 1 else result_text
                 elif not result_text.strip():
-                    # Result is empty but we collected text earlier
-                    return "\n\n".join(collected_text)
+                    final = "\n\n".join(collected_text)
+                elif collected_text[0] in result_text:
+                    final = result_text
+                elif result_text.strip():
+                    final = "\n\n".join(collected_text + [result_text])
                 else:
-                    # Result has content — check if it already includes everything
-                    # by seeing if our first collected text appears in the result
-                    if collected_text[0] in result_text:
-                        return result_text
-                    return "\n\n".join(collected_text + [result_text]) if result_text.strip() else "\n\n".join(collected_text)
+                    final = "\n\n".join(collected_text)
+                return _apply_reply_sentinel(final)
 
     @property
     def session_id(self) -> str | None:

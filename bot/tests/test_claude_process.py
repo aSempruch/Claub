@@ -3,7 +3,7 @@ import json
 import pytest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch, MagicMock
-from claude_assistant.claude_process import AgentProcess
+from claude_assistant.claude_process import AgentProcess, _apply_reply_sentinel
 
 
 @pytest.fixture
@@ -325,3 +325,65 @@ class TestReadUntilResult:
         result = await proc._read_until_result()
         assert "Part 1" in result
         assert "Part 2" in result
+
+    @pytest.mark.asyncio
+    async def test_reply_sentinel_strips_scratch(self, workspace: Path) -> None:
+        """[REPLY] marker discards everything before it."""
+        lines = [
+            json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "Let me think about this..."}]}}),
+            json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "t1", "name": "Read", "input": {}}]}}),
+            json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "Found it.\n\n[REPLY]\nThe answer is 42."}]}}),
+            json.dumps({"type": "result", "result": "Found it.\n\n[REPLY]\nThe answer is 42."}),
+        ]
+        proc = self._make_proc(workspace, lines)
+        result = await proc._read_until_result()
+        assert result == "The answer is 42."
+        assert "Let me think" not in result
+        assert "Found it." not in result
+
+    @pytest.mark.asyncio
+    async def test_reply_sentinel_last_occurrence_wins(self, workspace: Path) -> None:
+        """If [REPLY] appears multiple times, only text after the last one is sent."""
+        lines = [
+            json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "[REPLY]\nDraft 1"}]}}),
+            json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "t1", "name": "Read", "input": {}}]}}),
+            json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "[REPLY]\nFinal answer"}]}}),
+            json.dumps({"type": "result", "result": "[REPLY]\nFinal answer"}),
+        ]
+        proc = self._make_proc(workspace, lines)
+        result = await proc._read_until_result()
+        assert result == "Final answer"
+        assert "Draft 1" not in result
+
+    @pytest.mark.asyncio
+    async def test_no_sentinel_returns_full_text(self, workspace: Path) -> None:
+        """Without [REPLY], current behavior is preserved — everything is sent."""
+        lines = [
+            json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "First part."}]}}),
+            json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "t1", "name": "Read", "input": {}}]}}),
+            json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "Second part."}]}}),
+            json.dumps({"type": "result", "result": "Second part."}),
+        ]
+        proc = self._make_proc(workspace, lines)
+        result = await proc._read_until_result()
+        assert "First part." in result
+        assert "Second part." in result
+
+
+class TestApplyReplySentinel:
+    """Direct unit tests for the sentinel-stripping helper."""
+
+    def test_no_sentinel(self) -> None:
+        assert _apply_reply_sentinel("plain text") == "plain text"
+
+    def test_sentinel_strips_prefix(self) -> None:
+        assert _apply_reply_sentinel("scratch\n[REPLY]\nfinal") == "final"
+
+    def test_last_occurrence_wins(self) -> None:
+        assert _apply_reply_sentinel("[REPLY] draft\n[REPLY] real") == "real"
+
+    def test_strips_surrounding_whitespace(self) -> None:
+        assert _apply_reply_sentinel("x\n[REPLY]\n\n  hello  \n") == "hello"
+
+    def test_empty_after_sentinel(self) -> None:
+        assert _apply_reply_sentinel("scratch\n[REPLY]") == ""

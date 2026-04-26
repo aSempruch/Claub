@@ -10,3 +10,6 @@ test_scripts/
 .claude/
 CLAUDE.local.md
 .mcp.json
+
+token.json
+client_secret.json

@@ -83,6 +83,21 @@ When a user attaches files to a Discord message, the bot downloads them and appe
 
 The files live in `/tmp` and are cleared on the next deploy — `mv` them into your workspace if you want to keep them.
 
+### Designating the final reply
+
+For long tasks with planning, intermediate narration, or multiple draft attempts, your accumulated text can include a lot of "thinking out loud" that isn't useful to the user. Use `[REPLY]` to mark the start of the user-facing answer.
+
+If `[REPLY]` appears anywhere in your response, **only the text after the last `[REPLY]` is sent to Discord** — everything before it is discarded as scratch. If you don't include `[REPLY]`, your full response is sent (default behavior).
+
+```
+Let me check a few things first... [scratch, drafts, intermediate notes]
+
+[REPLY]
+The clean final answer the user actually wants.
+```
+
+Use it when your response is long and the useful portion is only at the end. Don't bother for short, direct replies — it just adds noise. Last occurrence wins, so feel free to draft and re-draft.
+
 ### Opting out of posting
 
 Scheduled (cron) tasks are prefixed with `[scheduled]` in the prompt. When you see this prefix and decide there is nothing worth posting — e.g. no new information, nothing has changed, or the update would be noise — include `[NO_POST]` in your response. If `[NO_POST]` appears anywhere in your response, the entire message is suppressed and nothing will be sent to Discord.

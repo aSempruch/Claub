@@ -261,6 +261,38 @@ A subprocess MCP server at `/app/mcps/hass/` exposing a small, hand-picked slice
 
 **Extending:** Edit `mcps/hass/server.py` and add a new `@mcp.tool()` function. Use `_get_state(entity_id)`, `_get_history(entity_id, hours)`, or `_call_service(domain, service, payload)` as helpers — they handle the auth and HTTP. Shape the response so the agent gets only the fields it needs, not raw HASS state JSON. Then add the new tool to `settings.json`'s allow list (it's already covered by `mcp__hass__*`).
 
+#### Google MCP (Gmail + Calendar, read-only, multi-account)
+
+An *instance* MCP server at `/claub/mcps/google/server.py` (i.e. lives under the user's bind-mounted `mcps/`, not the baked image) that exposes Gmail search/fetch and Calendar list/fetch tools against one Google account at a time. Multiple accounts are supported by running multiple MCP instances, one per account, each with its own token file.
+
+**Account layout:** Each Google account gets a directory under `~/docker/claub/mcps/google/accounts/{label}/`, holding a single `token.json` (mode 0600). The label is a short tag (e.g. `lk`, `rhs`, `alan3ir0`) — by convention it identifies the *account being read*, not the GCP project that owns the OAuth client (the two can differ; a refresh token from project A can authorize calls against account B). Token files are gitignored via `**/token.json` in the instance repo's `.gitignore`.
+
+**Per-agent wiring:** Each agent that wants access to an account adds an MCP server entry to its `config/agents/{agent}.mcp.json`, conventionally named `google_{label}`:
+
+```json
+"google_rhs": {
+  "command": "uv",
+  "args": ["--directory", "/claub/mcps/google", "run", "server.py"],
+  "env": {
+    "GOOGLE_MCP_TOKEN": "/claub/mcps/google/accounts/rhs/token.json"
+  }
+}
+```
+
+The server reads `GOOGLE_MCP_TOKEN` to find its token file. Each agent process spawns its own subprocess(es), one per `google_*` server entry — so per-account isolation is automatic and an agent can have multiple accounts wired in simultaneously (each shows up under its own `mcp__google_{label}__*` prefix).
+
+**Allow-list:** Each `google_{label}` MCP also needs `mcp__google_{label}__*` in `settings.json`'s `permissions.allow` (matching the existing `mcp__google_lk__*` / `mcp__google_rhs__*` pattern). The settings allow-list is the hard ceiling for what tools an agent can call.
+
+**Scope-based tool filtering:** At MCP startup the server reads `token.json`'s `scopes` list and only registers the tool group(s) that match: `gmail_*` requires `gmail.readonly`, `calendar_*` requires `calendar.readonly`. A token with only one scope exposes only the matching half of the tool catalog — agents simply don't see tools they can't use. The startup also writes a one-line summary to stderr (visible in `docker compose logs`):
+
+```
+google MCP: token=token.json, scopes=[...], registered=['gmail', 'calendar']
+```
+
+**Token replacement is hot for refresh-only swaps, cold for scope changes.** The MCP re-reads `token.json` on every `_creds()` call (so re-minting with the same scopes takes effect on the agent's next tool call, no restart). But the *scope filter* runs once at MCP startup, so adding or removing scopes requires `docker compose restart` for the agent's tool catalog to update.
+
+**Failure mode — `invalid_grant` / persistent 401:** the refresh token has been revoked (user pulled access at <https://myaccount.google.com/permissions>, or the OAuth client/project was modified upstream). Notify the user — re-minting requires a consent flow on the source machine.
+
 #### Custom MCP Servers
 
 Custom MCP servers live in `/claub/mcps/` (bind-mounted from host). The entrypoint automatically runs `uv sync` for any subdirectory containing a `pyproject.toml` on every container start, so Python-based MCPs are always ready.
