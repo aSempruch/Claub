@@ -27,14 +27,20 @@ STATE_LOCK = threading.Lock()
 CONFIG: dict = {}
 
 
+def is_port_listening(host: str, port: int, timeout: float = 0.3) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
 def wait_for_port(host: str, port: int, timeout: float) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        try:
-            with socket.create_connection((host, port), timeout=0.5):
-                return True
-        except OSError:
-            time.sleep(0.1)
+        if is_port_listening(host, port):
+            return True
+        time.sleep(0.1)
     return False
 
 
@@ -53,10 +59,9 @@ def spawn_agent(name: str) -> tuple[int, str]:
 
     with STATE_LOCK:
         existing = STATE.get(name)
-        if existing and existing.poll() is None:
+        if existing and is_port_listening("127.0.0.1", agent_cfg["port"]):
             log.info("start %s: already running pid=%d", name, existing.pid)
-            if wait_for_port("127.0.0.1", agent_cfg["port"], timeout=1.0):
-                return 200, json.dumps({"status": "already-running", "pid": existing.pid})
+            return 200, json.dumps({"status": "already-running", "pid": existing.pid})
 
         Path(agent_cfg["user_data_dir"]).mkdir(parents=True, exist_ok=True)
         cmd = build_command(agent_cfg)
@@ -104,10 +109,12 @@ def status() -> str:
     out: dict[str, dict] = {}
     with STATE_LOCK:
         for name, child in STATE.items():
+            port = CONFIG.get("agents", {}).get(name, {}).get("port")
+            alive = is_port_listening("127.0.0.1", port) if port else False
             out[name] = {
                 "pid": child.pid,
-                "alive": child.poll() is None,
-                "port": CONFIG.get("agents", {}).get(name, {}).get("port"),
+                "alive": alive,
+                "port": port,
             }
     return json.dumps(out)
 
