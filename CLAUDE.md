@@ -220,6 +220,8 @@ Per-agent `.mcp.json` files point at that agent's port (e.g. `http://host.docker
 
 Agents use `/claub/...` for everything normally, but swap in `$CLAUB_HOST_PATH/...` when handing a path to Playwright's file-chooser tools — e.g. `/claub/workspaces/career/resume.pdf` becomes `$CLAUB_HOST_PATH/workspaces/career/resume.pdf`, which resolves to e.g. `/Users/you/docker/claub/workspaces/career/resume.pdf` on both sides. Agent-facing documentation lives in `/claub/config/CLAUDE.md`.
 
+**Page zoom is set per-profile, not via init.js.** We want the browser to render at ~80% so more fits in the viewport. The earlier approach of `documentElement.style.zoom = '80%'` in init.js broke hCaptcha rendering — cross-origin iframes (the captcha challenge frame) don't inherit CSS `zoom`, so the captcha laid out smaller than its parent-side iframe element and clicks misaligned. Instead, each agent's `Default/Preferences` carries `profile.default_zoom_level` (and `partition.default_zoom_level.x`) — Chromium's native zoom (the Cmd+− equivalent), which works in the compositor and propagates to iframes correctly. After adding a new agent (and creating its bridge profile entry), run `scripts/playwright-bridge/apply-zoom-prefs.py` once to seed the zoom pref. The script is idempotent; do not run it while Chromium has the profile open.
+
 ### Lifecycle Hooks
 
 `AgentProcess` runs shell commands around the `claude` subprocess. `on_start` hooks run **before** `claude` is exec'd (so any MCP server they spawn is ready when Claude handshakes); `on_stop` hooks run **after** it exits. Hooks are sequential, each subject to a 15 s default timeout; failure or timeout logs a warning but does not abort agent lifecycle.
