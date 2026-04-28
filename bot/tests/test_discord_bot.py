@@ -38,6 +38,58 @@ def test_bot_starts_with_no_processes(bot: AssistantBot) -> None:
     assert bot._processes == {}
 
 
+def test_setup_hook_is_assigned_not_on_ready(bot: AssistantBot) -> None:
+    """Init must live in setup_hook (fires once) not on_ready (fires per reconnect).
+
+    Regression: previously init was in on_ready and every Discord reconnect
+    spawned a duplicate supervisor/reaper/scheduler and tried to re-bind the
+    MCP server port, crashing the bot.
+    """
+    assert bot._client.setup_hook.__name__ == "setup_hook"
+    # The Client base method is `pass`-only; ours has real init code.
+    import inspect
+    src = inspect.getsource(bot._client.setup_hook)
+    assert "Scheduler(" in src
+    assert "_supervisor_task" in src
+    assert "_start_mcp_server" in src
+
+
+@pytest.mark.asyncio
+async def test_on_ready_does_not_duplicate_init(bot: AssistantBot) -> None:
+    """Calling on_ready repeatedly (simulating reconnects) must not duplicate state."""
+    # Run setup_hook once (simulates discord.py login)
+    with patch.object(bot, "_start_mcp_server", new=AsyncMock()):
+        await bot._client.setup_hook()
+
+    sup1 = bot._supervisor_task
+    reaper1 = bot._idle_reaper_task
+    sched1 = bot._scheduler
+    mcp1 = bot._mcp_server_task
+
+    # Fire on_ready three times (simulating reconnect storm).
+    # @client.event registers the handler by setattr(client, 'on_ready', coro).
+    on_ready = bot._client.on_ready
+    for _ in range(3):
+        await on_ready()
+
+    # No new tasks/scheduler should have been created
+    assert bot._supervisor_task is sup1
+    assert bot._idle_reaper_task is reaper1
+    assert bot._scheduler is sched1
+    assert bot._mcp_server_task is mcp1
+
+    # Cleanup
+    sup1.cancel()
+    reaper1.cancel()
+    mcp1.cancel()
+    bot._scheduler.stop()
+    for t in (sup1, reaper1, mcp1):
+        try:
+            await t
+        except (asyncio.CancelledError, Exception):
+            pass
+
+
 def test_merged_hooks_additive() -> None:
     from claude_assistant.discord_bot import _merged_hooks
 

@@ -370,6 +370,44 @@ class TestReadUntilResult:
         assert "Second part." in result
 
 
+class TestInactivityTimeout:
+    """`_read_until_result` should raise if the stream stays silent too long."""
+
+    @pytest.mark.asyncio
+    async def test_silent_stream_raises(self, workspace: Path) -> None:
+        proc = AgentProcess(workspace=workspace, agent_name="testagent")
+        proc._process = MagicMock()
+        proc._process.stdout = asyncio.StreamReader()
+
+        with pytest.raises(RuntimeError, match="silent"):
+            await proc._read_until_result(inactivity_timeout=0.05)
+
+    @pytest.mark.asyncio
+    async def test_slow_stream_within_timeout_succeeds(self, workspace: Path) -> None:
+        """Events arriving slower than inactivity_timeout should still complete."""
+        proc = AgentProcess(workspace=workspace, agent_name="testagent")
+        proc._process = MagicMock()
+        proc._process.stdout = asyncio.StreamReader()
+
+        async def feeder():
+            await asyncio.sleep(0.02)
+            proc._process.stdout.feed_data(
+                json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "hi"}]}}).encode() + b"\n"
+            )
+            await asyncio.sleep(0.02)
+            proc._process.stdout.feed_data(
+                json.dumps({"type": "result", "result": "hi"}).encode() + b"\n"
+            )
+            proc._process.stdout.feed_eof()
+
+        feeder_task = asyncio.create_task(feeder())
+        try:
+            result = await proc._read_until_result(inactivity_timeout=0.5)
+            assert result == "hi"
+        finally:
+            await feeder_task
+
+
 class TestApplyReplySentinel:
     """Direct unit tests for the sentinel-stripping helper."""
 

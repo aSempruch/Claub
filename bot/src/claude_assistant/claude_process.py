@@ -268,17 +268,34 @@ class AgentProcess:
             self._ready.set()
 
     async def _drain_stderr(self) -> None:
-        """Log stderr from the claude process."""
+        """Log stderr from the claude process. Lines that look like errors get INFO."""
         if not self._process or not self._process.stderr:
             return
         while True:
             line = await self._process.stderr.readline()
             if not line:
                 return
-            log.debug("claude stderr: %s", line.decode().strip())
+            text = line.decode(errors="replace").strip()
+            lowered = text.lower()
+            if any(k in lowered for k in ("error", "exception", "timeout", "traceback")):
+                log.info("claude stderr (agent=%s): %s", self.agent_name, text)
+            else:
+                log.debug("claude stderr (agent=%s): %s", self.agent_name, text)
 
-    async def send_message(self, content: str, timeout: float = 900) -> str:
-        """Send a message and return the result. Timeout in seconds (default 15min)."""
+    async def send_message(
+        self,
+        content: str,
+        timeout: float = 900,
+        inactivity_timeout: float = 300,
+    ) -> str:
+        """Send a message and return the result.
+
+        Two timeouts:
+        - ``timeout`` (default 15min): cap on the entire turn end-to-end.
+        - ``inactivity_timeout`` (default 5min): max gap between stream-json
+          events. Catches silent wedges (stuck MCP child, hung tool call)
+          where the subprocess is alive but not emitting.
+        """
         try:
             async with asyncio.timeout(30):
                 await self._ready.wait()
@@ -295,30 +312,61 @@ class AgentProcess:
                 self._first_message = False
             sid = self._session_id or "default"
             msg = self._format_input(content, sid)
+            log.info(
+                "send_message start (agent=%s, prompt_len=%d)",
+                self.agent_name, len(content),
+            )
+            started = asyncio.get_event_loop().time()
             self._process.stdin.write(msg.encode() + b"\n")
             await self._process.stdin.drain()
 
             try:
-                return await asyncio.wait_for(
-                    self._read_until_result(), timeout=timeout
+                result = await asyncio.wait_for(
+                    self._read_until_result(inactivity_timeout=inactivity_timeout),
+                    timeout=timeout,
                 )
             except asyncio.TimeoutError:
+                elapsed = asyncio.get_event_loop().time() - started
+                log.warning(
+                    "send_message overall timeout (agent=%s, elapsed=%.1fs, cap=%.0fs)",
+                    self.agent_name, elapsed, timeout,
+                )
                 raise RuntimeError(
                     f"Agent {self.agent_name} did not respond within {timeout}s"
                 )
+            elapsed = asyncio.get_event_loop().time() - started
+            log.info(
+                "send_message done (agent=%s, elapsed=%.1fs, result_len=%d)",
+                self.agent_name, elapsed, len(result),
+            )
+            return result
 
-    async def _read_until_result(self) -> str:
+    async def _read_until_result(self, inactivity_timeout: float = 300) -> str:
         """Read stream-json events until a result event arrives.
 
         Collects text from assistant events across all turns so that text
         produced before tool calls isn't lost — the ``result`` field in the
         final event only contains text from the *last* turn.
+
+        Raises ``RuntimeError`` if no event arrives within
+        ``inactivity_timeout`` seconds — catches the case where claude is
+        alive but stuck (e.g. on a hung MCP child) and would otherwise pin
+        a Discord task until the outer ``send_message`` cap fires.
         """
         if not self._process or not self._process.stdout:
             raise RuntimeError("Process not available")
         collected_text: list[str] = []
         while True:
-            line = await self._process.stdout.readline()
+            try:
+                line = await asyncio.wait_for(
+                    self._process.stdout.readline(),
+                    timeout=inactivity_timeout,
+                )
+            except asyncio.TimeoutError:
+                raise RuntimeError(
+                    f"Agent {self.agent_name} stream silent for {inactivity_timeout:.0f}s — "
+                    "likely stuck on a tool call or MCP child"
+                )
             if not line:
                 raise RuntimeError("Claude process ended unexpectedly")
             try:

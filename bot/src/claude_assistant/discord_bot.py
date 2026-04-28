@@ -137,11 +137,11 @@ class AssistantBot:
         self._setup_events()
 
     def _setup_events(self) -> None:
-        @self._client.event
-        async def on_ready() -> None:
-            log.info("Discord connected as %s", self._client.user)
-            self._supervisor_task = asyncio.create_task(self._supervise_all())
-            self._idle_reaper_task = asyncio.create_task(self._reap_idle_processes())
+        # setup_hook fires once before the gateway connects; on_ready fires
+        # on every (re)connect. Putting init in setup_hook avoids spawning
+        # duplicate supervisor/reaper/scheduler tasks and rebinding the MCP
+        # server port on Discord reconnects.
+        async def setup_hook() -> None:
             self._scheduler = Scheduler(
                 self.schedule_store,
                 self._handle_scheduled,
@@ -149,7 +149,15 @@ class AssistantBot:
                 history=self.firing_history,
             )
             self._scheduler.start()
+            self._supervisor_task = asyncio.create_task(self._supervise_all())
+            self._idle_reaper_task = asyncio.create_task(self._reap_idle_processes())
             self._mcp_server_task = asyncio.create_task(self._start_mcp_server())
+
+        self._client.setup_hook = setup_hook  # type: ignore[method-assign]
+
+        @self._client.event
+        async def on_ready() -> None:
+            log.info("Discord connected as %s", self._client.user)
 
         @self._client.event
         async def on_message(message: discord.Message) -> None:
@@ -318,6 +326,10 @@ class AssistantBot:
     async def _handle_agent_message(
         self, message: discord.Message, agent_name: str, content: str
     ) -> None:
+        log.info(
+            "Handling message for %s (chan=%s, len=%d)",
+            agent_name, message.channel.id, len(content),
+        )
         async with message.channel.typing():
             footer = await download_attachments(message, agent_name)
             if footer:
@@ -329,6 +341,10 @@ class AssistantBot:
                 await message.channel.send(
                     "Claude authentication expired. Re-authenticate with `claude` on the host and restart."
                 )
+                return
+            except RuntimeError as e:
+                log.exception("Agent %s failed after restart-and-retry", agent_name)
+                await message.channel.send(f"Agent stalled: {e}")
                 return
 
             process = self._processes.get(agent_name)
@@ -410,11 +426,14 @@ class AssistantBot:
         if agent_name is None:
             return
 
+        log.info("/stop received for %s (chan=%s)", agent_name, message.channel.id)
         self._reaped.add(agent_name)
         process = self._processes.get(agent_name)
         if process:
+            log.info("/stop calling process.stop() for %s", agent_name)
             await process.stop()
             del self._processes[agent_name]
+            log.info("/stop process stopped for %s", agent_name)
         self._last_activity.pop(agent_name, None)
         await message.channel.send(f"Agent `{agent_name}` stopped.")
 
