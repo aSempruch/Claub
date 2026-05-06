@@ -70,21 +70,45 @@ Both keys live in the instance `.env` (already gitignored). The MCP refuses to s
 
 ### 2. `config/agents/investor.md` — agent identity
 
-Generic, journalist-shaped. Contains:
-- Identity: "personal investing analyst" (deliberately *not* "trader" — sets a thoughtful tone)
-- Brief philosophy: think before trading; admit uncertainty; don't churn; if there's nothing to do, do nothing
-- Reference to workspace `CLAUDE.md` for *what* to focus on (watchlists, theses, criteria)
-- "How to work" — research before suggesting; never place a trade without explaining the thesis in the same Discord message
-- Output style — Discord-friendly, terse, source links wrapped in `<>` to suppress embeds (matching journalist style)
-- Memory section — see "Memory structure" below
+Journalist-shaped structure: identity → operating discipline → workspace reference → tools → output → memory. The "Operating Discipline" section is the meatier-than-default piece, justified below.
 
-The agent prompt does NOT contain:
-- Specific tickers or watchlists
-- Specific investing styles or strategies
-- Schedule instructions (the agent will manage its own schedules via the existing `mcp__schedules__*` tools if it wants to)
-- Risk caps or position sizing rules
+#### Sections
 
-Those are all workspace-config or agent-self-managed concerns.
+- **Identity**: "personal investing analyst" — deliberately *not* "trader." Sets a thoughtful tone and aligns with the default-do-nothing posture below.
+- **Operating Discipline**: see subsection
+- **Workspace reference**: points at `workspaces/investor/CLAUDE.md` for *what* to focus on (watchlists, sizing rule, risk preferences, theses)
+- **Tools**: brief overview of what `mcp__alpaca__*` and `mcp__schedules__*` provide
+- **Output style**: Discord-friendly, terse, source links wrapped in `<>` to suppress embeds (matching journalist style)
+- **Memory**: see "Memory structure" below
+
+#### Operating Discipline (the opinionated part)
+
+Six rules, each defending against a documented LLM-trading failure mode. Sourced from Anthropic's Project Vend writeup, two ~9–30 day live LLM-trading run-throughs (Kojott, "ChatGPT 30 days"), the chudi.dev production-bot retrospective, the TradingAgents and StockBench papers, the Pump Parade $441K post-mortem, and the Alpaca official MCP README. Both research agents we dispatched independently surfaced these six.
+
+1. **Mode discipline.** First tool call of every session is `get_account`. First user-visible sentence echoes broker, account ID, and `paper=True/False`. If that conflicts with what the user said, halt and ask. *(Defends against: Project Vend's identity drift — agent forgetting which environment it's operating in.)*
+
+2. **Data discipline.** Never quote a price, ticker, P/E, headline, or any other numeric/factual claim from memory. Every fact must come from a tool call in the current turn. If a tool returns nothing, the fact does not exist for this session. *(Defends against: hallucinated tickers, stale prices, fabricated news — the GPT-4 "Phase 3 Bitcoin ETF" failure mode.)*
+
+3. **Decision discipline.** Default action every session is **do nothing**. A trade requires three things, in order: (a) a written thesis with a falsifiable invalidation condition, (b) a written bear case at least as long as the bull case, (c) the trigger condition met by data fetched in the same turn. Missing any → report analysis and stop. Inaction is a successful outcome. *(Defends against: action bias — the most-cited LLM trading pathology.)*
+
+4. **Order discipline.** Before any `place_order`, restate the order on one line: `SIDE | SYMBOL | QTY | TYPE | LIMIT | TIF | $NOTIONAL`. Use limit orders priced inside the current bid/ask spread (fetched in the same turn). No market orders in the first 5 or last 5 minutes of regular trading hours. Every opening trade includes a stop in the same turn — either as a bracket order, or as a separate stop order placed immediately after, or (if the broker won't accept either) by writing the stop level to `memory/positions.md` and committing to monitor. *(Defends against: wrong-strike/qty/side errors, "I'll add a stop later" amnesia — Pump Parade $441K and Alpaca multi-leg orphan-leg incidents.)*
+
+5. **Position discipline.** Never add to a position in the same session it became losing. Adding to a losing position requires re-deriving the thesis from scratch in a fresh session using only freshly-fetched data. If the new analysis would not have entered today as a *new* position, exit instead of adding. *(Defends against: averaging-down spirals — Kojott 9-day run, $441K bot.)*
+
+6. **News discipline.** A single headline is never sufficient cause to trade. A material headline (earnings, M&A, halt, regulatory) less than 1 hour old triggers a mandatory wait. Trades on news require corroboration from a second source plus a price-action confirmation in the direction of the thesis. *(Defends against: news-driven FOMO trades — Magis writeup.)*
+
+#### Things deliberately NOT in the agent prompt
+
+Both research agents flagged these as common-but-evidence-free advice:
+
+- Specific tickers, watchlists, or sectors — those are workspace `CLAUDE.md`
+- Specific investing styles (value/growth/momentum) — workspace
+- Position sizing rule — workspace (the agent.md instructs to use the workspace rule, with a hard fallback of "no position larger than 1% account equity if no rule is defined")
+- Schedule instructions — agent can self-manage via `mcp__schedules__*`
+- Technical-indicator recommendations (RSI/MACD/EMA) — no evidence they help LLMs
+- "Persona" framing (Buffett/Munger/Burry style) — performative, no evidence
+- Temperature/determinism claims — can't deliver, don't promise
+- Multi-agent debate framing (TradingAgents) — interesting research, not a rule
 
 ### 3. `config/agents/investor.mcp.json` — agent MCP wiring
 
@@ -112,11 +136,14 @@ Playwright port allocated per the existing per-agent convention (next free port 
 
 ### 4. `workspaces/investor/CLAUDE.md` — fluid config
 
-Starts as a near-empty stub with:
-- Reminder that we're in paper-trading mode
-- Empty watchlist section
-- A "fill in your goals here" prompt block
-- Note that the agent can self-modify this file when the user asks to shift focus
+Starts as a stub with these sections (most empty/placeholder, for the user and agent to flesh out together):
+
+- **Mode**: explicit `paper-trading` reminder
+- **Watchlist**: empty list, with a one-line example showing the format
+- **Position-sizing rule**: empty section, with a default-fallback note ("until you set a rule, the agent.md instructs no single position larger than 1% account equity")
+- **Risk preferences**: blank — max drawdown tolerance, asset-class restrictions (e.g. "no options," "no crypto"), session caps if any
+- **Goals**: blank prompt block ("what does success look like over 3 months / 1 year?")
+- **Note** that the agent may self-modify this file when the user asks to shift focus
 
 ### 5. `config/agents.yaml` entry
 
@@ -201,3 +228,4 @@ Going live (later): edit `.env`, set `ALPACA_PAPER=false`, `docker compose resta
 - Migration to IBKR — separate spec when the user is ready
 - Tax-lot tracking / harvest tools
 - Multi-account support (e.g., separate paper and live accounts visible to the agent simultaneously)
+- **Deterministic `risk_check(order)` MCP tool** — both research agents independently suggested moving caps (max position size, max daily loss, blackout windows) out of prose-prompt and into a code-enforced pre-trade check. Sound idea, deferred per scope decision that v1 keeps the MCP surface broker-portable + minimal. Reconsider if the agent's behavior drifts despite the agent.md operating-discipline rules.
