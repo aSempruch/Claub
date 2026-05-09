@@ -2,7 +2,9 @@
 
 import json
 import os
+import re
 import uuid
+from pathlib import Path
 
 import httpx
 from mcp.server.fastmcp import FastMCP
@@ -11,6 +13,59 @@ mcp = FastMCP("leetcode-stats")
 
 API_URL = "https://leetcode.com/graphql"
 DEFAULT_USERNAME = os.environ.get("LEETCODE_USERNAME", "")
+DEFAULT_TOKEN_FILE = "/claub/mcps/leetcode-stats/token.json"
+
+# JWT segment: base64url chars, optional padding. LeetCode's session is a 3-segment JWT.
+_JWT_SEGMENT_RE = re.compile(r"^[A-Za-z0-9_-]+=*$")
+# Django csrftoken: 32 alphanumeric chars.
+_CSRF_RE = re.compile(r"^[A-Za-z0-9]{32}$")
+
+
+def _token_path() -> Path:
+    return Path(os.environ.get("LEETCODE_TOKEN_FILE", DEFAULT_TOKEN_FILE))
+
+
+def _read_token() -> tuple[str, str]:
+    """Read session/csrf from the token file. Raises ValueError on any problem."""
+    path = _token_path()
+    try:
+        data = json.loads(path.read_text())
+    except FileNotFoundError:
+        raise ValueError(
+            f"LeetCode token file not found at {path} — ask the user for fresh "
+            "session/csrf cookies and call update_session"
+        )
+    except json.JSONDecodeError as e:
+        raise ValueError(f"LeetCode token file at {path} is not valid JSON: {e}")
+    session = data.get("session")
+    csrf = data.get("csrf")
+    if not isinstance(session, str) or not isinstance(csrf, str) or not session or not csrf:
+        raise ValueError(
+            f"LeetCode token file at {path} is missing 'session' or 'csrf' — "
+            "call update_session with fresh cookies"
+        )
+    return session, csrf
+
+
+def _validate_session(session: str) -> str | None:
+    """Return None if valid, else an error message."""
+    if not (100 <= len(session) <= 4000):
+        return f"session length {len(session)} outside expected range 100..4000"
+    parts = session.split(".")
+    if len(parts) != 3:
+        return f"session must be a 3-segment JWT (got {len(parts)} segments)"
+    for i, part in enumerate(parts):
+        if not part:
+            return f"session JWT segment {i + 1} is empty"
+        if not _JWT_SEGMENT_RE.match(part):
+            return f"session JWT segment {i + 1} contains non-base64url chars"
+    return None
+
+
+def _validate_csrf(csrf: str) -> str | None:
+    if not _CSRF_RE.match(csrf):
+        return f"csrf must be exactly 32 alphanumeric chars (got {len(csrf)})"
+    return None
 
 HEADERS = {
     "Content-Type": "application/json",
@@ -31,10 +86,7 @@ LANG_IDS = {
 
 def _auth_headers(slug: str) -> dict[str, str]:
     """Build browser-realistic headers for authenticated LeetCode API requests."""
-    session = os.environ.get("LEETCODE_SESSION")
-    csrf = os.environ.get("LEETCODE_CSRF_TOKEN")
-    if not session or not csrf:
-        raise ValueError("LEETCODE_SESSION and LEETCODE_CSRF_TOKEN env vars required")
+    session, csrf = _read_token()
     return {
         "accept": "*/*",
         "accept-language": "en-US,en;q=0.9",
@@ -312,6 +364,55 @@ async def get_submissions(problem: str) -> str:
         return json.dumps(all_submissions, indent=2)
     except ValueError as e:
         return str(e)
+
+
+@mcp.tool()
+def update_session(session: str, csrf: str) -> str:
+    """Replace the stored LeetCode session and csrf cookies.
+
+    Use this when the user provides fresh cookies (typically after a session
+    expires). Validates the shape before writing — won't overwrite the file
+    with malformed input. The previous token is backed up as token.json.prev.
+
+    Args:
+        session: LEETCODE_SESSION cookie value — a JWT (3 dot-separated base64url segments).
+        csrf: csrftoken cookie value — exactly 32 alphanumeric chars.
+
+    Returns a status message. Does NOT echo the token values back.
+    """
+    session = session.strip().strip('"').strip("'")
+    csrf = csrf.strip().strip('"').strip("'")
+
+    err = _validate_session(session)
+    if err:
+        return f"rejected: {err}"
+    err = _validate_csrf(csrf)
+    if err:
+        return f"rejected: {err}"
+
+    path = _token_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    if path.exists():
+        backup = path.with_suffix(path.suffix + ".prev")
+        backup.write_bytes(path.read_bytes())
+        try:
+            os.chmod(backup, 0o600)
+        except OSError:
+            pass
+
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps({"session": session, "csrf": csrf}))
+    try:
+        os.chmod(tmp, 0o600)
+    except OSError:
+        pass
+    os.replace(tmp, path)
+
+    return (
+        f"ok — wrote {path} (session len={len(session)}, csrf len={len(csrf)}). "
+        "Previous token saved as .prev."
+    )
 
 
 if __name__ == "__main__":

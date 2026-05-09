@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import random
@@ -23,6 +24,28 @@ from claude_assistant.scheduler import Scheduler
 from claude_assistant.session import SessionStore
 
 log = logging.getLogger(__name__)
+
+
+@contextlib.asynccontextmanager
+async def _safe_typing(channel: discord.abc.Messageable):
+    """channel.typing() that doesn't drop the message if Discord rejects the typing call.
+
+    Discord can return 429 (error 40062) on /typing for a specific channel even when the
+    rest of the API works. The typing indicator is cosmetic, so swallow HTTPException
+    from entering the context and proceed without the indicator.
+    """
+    cm = channel.typing()
+    entered = False
+    try:
+        await cm.__aenter__()
+        entered = True
+    except discord.HTTPException as e:
+        log.warning("typing indicator unavailable for channel %s: %s", channel.id, e)
+    try:
+        yield
+    finally:
+        if entered:
+            await cm.__aexit__(None, None, None)
 
 
 def _merged_hooks(config: AssistantConfig, agent_name: str, attr: str) -> list[str]:
@@ -330,7 +353,7 @@ class AssistantBot:
             "Handling message for %s (chan=%s, len=%d)",
             agent_name, message.channel.id, len(content),
         )
-        async with message.channel.typing():
+        async with _safe_typing(message.channel):
             footer = await download_attachments(message, agent_name)
             if footer:
                 content = (content + footer) if content else footer.lstrip()
