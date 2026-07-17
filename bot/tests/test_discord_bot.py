@@ -211,3 +211,60 @@ async def test_handle_agent_message_appends_attachment_footer(
     assert "hi.txt" in captured["content"]
     # File was actually written to the patched base_dir
     assert (tmp_path / "main" / "555" / "hi.txt").read_bytes() == b"hello"
+
+
+# --- _deliver_result: resilient Discord delivery (timeout + retry + no silent loss) ---
+# Regression: during the 2026-07-16 Discord API incident, a webhook send hung
+# forever inside discord.py with no timeout; the agent's reply was silently
+# discarded and the handler task stayed parked. Delivery must be bounded,
+# retried once, and loudly logged on total failure — never raised, never silent.
+
+
+@pytest.mark.asyncio
+async def test_deliver_result_sends_once_on_success(bot: AssistantBot) -> None:
+    channel = MagicMock()
+    with patch.object(bot, "_send_chunked", new=AsyncMock()) as send:
+        await bot._deliver_result(channel, "main", "hello")
+    send.assert_awaited_once_with(channel, "main", "hello")
+
+
+@pytest.mark.asyncio
+async def test_deliver_result_retries_once_after_failure(bot: AssistantBot) -> None:
+    channel = MagicMock()
+    send = AsyncMock(side_effect=[RuntimeError("discord 500"), None])
+    with patch.object(bot, "_send_chunked", new=send):
+        await bot._deliver_result(channel, "main", "hello")
+    assert send.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_deliver_result_times_out_hung_send_and_retries(bot: AssistantBot) -> None:
+    channel = MagicMock()
+    calls = []
+
+    async def hang_then_succeed(*args: Any) -> None:
+        calls.append(args)
+        if len(calls) == 1:
+            await asyncio.sleep(60)  # simulates webhook call wedged in discord.py
+
+    with patch.object(bot, "_send_chunked", new=hang_then_succeed):
+        with patch.object(bot, "DELIVER_TIMEOUT_S", 0.05):
+            await bot._deliver_result(channel, "main", "hello")
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_deliver_result_logs_error_when_all_attempts_fail(
+    bot: AssistantBot, caplog: pytest.LogCaptureFixture
+) -> None:
+    channel = MagicMock()
+    send = AsyncMock(side_effect=RuntimeError("discord down"))
+    with patch.object(bot, "_send_chunked", new=send):
+        with caplog.at_level("ERROR"):
+            # Must not raise — a lost reply is logged, not propagated
+            await bot._deliver_result(channel, "main", "x" * 1790)
+    assert send.await_count == 2
+    assert any(
+        "main" in r.message and "1790" in r.message
+        for r in caplog.records if r.levelname == "ERROR"
+    )

@@ -375,7 +375,7 @@ class AssistantBot:
             if process and process.session_id:
                 self.sessions.set(agent_name, process.session_id)
 
-        await self._send_chunked(message.channel, agent_name, result)
+        await self._deliver_result(message.channel, agent_name, result)
 
     async def _send_with_restart(self, agent_name: str, content: str) -> str:
         """Send a message to an agent, restarting the process on failure."""
@@ -427,7 +427,7 @@ class AssistantBot:
         if process and process.session_id:
             self.sessions.set(agent_name, process.session_id)
 
-        await self._send_chunked(channel, agent_name, result)
+        await self._deliver_result(channel, agent_name, result)
 
     # --- Commands ---
 
@@ -476,6 +476,37 @@ class AssistantBot:
         wh = await channel.create_webhook(name="claub-agent")
         self._webhooks[channel.id] = wh
         return wh
+
+    # Per-attempt cap on delivering one agent reply to Discord. During the
+    # 2026-07-16 Discord API incident a webhook send hung indefinitely inside
+    # discord.py (no total timeout on its HTTP calls), silently discarding the
+    # reply and parking the handler task.
+    DELIVER_TIMEOUT_S = 60.0
+
+    async def _deliver_result(
+        self,
+        channel: discord.TextChannel,
+        agent_name: str,
+        result: str,
+    ) -> None:
+        """Deliver an agent reply with a timeout and one retry; log loudly on loss."""
+        for attempt in (1, 2):
+            try:
+                async with asyncio.timeout(self.DELIVER_TIMEOUT_S):
+                    await self._send_chunked(channel, agent_name, result)
+                return
+            except Exception:
+                if attempt == 1:
+                    log.warning(
+                        "Delivering reply for %s failed, retrying once", agent_name,
+                        exc_info=True,
+                    )
+                else:
+                    log.error(
+                        "Reply from %s LOST after retry (len=%d) — Discord send failed twice",
+                        agent_name, len(result),
+                        exc_info=True,
+                    )
 
     async def _send_chunked(
         self,
