@@ -11,8 +11,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 ENV PATH="/root/.local/bin:$PATH"
 
-# Install Claude CLI
-RUN npm install -g @anthropic-ai/claude-code
+# Install Claude CLI (pinned — bump deliberately, not via floating "latest")
+RUN npm install -g @anthropic-ai/claude-code@2.1.170
 
 # Install Python deps (deps layer cached separately from source)
 WORKDIR /app/bot
