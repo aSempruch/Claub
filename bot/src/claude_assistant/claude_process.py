@@ -285,13 +285,13 @@ class AgentProcess:
     async def send_message(
         self,
         content: str,
-        timeout: float = 900,
+        timeout: float = 3600,
         inactivity_timeout: float = 300,
     ) -> str:
         """Send a message and return the result.
 
         Two timeouts:
-        - ``timeout`` (default 15min): cap on the entire turn end-to-end.
+        - ``timeout`` (default 60min): cap on the entire turn end-to-end.
         - ``inactivity_timeout`` (default 5min): max gap between stream-json
           events. Catches silent wedges (stuck MCP child, hung tool call)
           where the subprocess is alive but not emitting.

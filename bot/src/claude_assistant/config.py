@@ -10,7 +10,7 @@ import yaml
 log = logging.getLogger(__name__)
 
 
-VALID_EFFORT_LEVELS = ("low", "medium", "high", "max")
+VALID_EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
 
 
 def _validate_compact_pct(value: int | None, context: str) -> int | None:
@@ -29,6 +29,7 @@ class AgentConfig:
     avatar_url: str | None = None
     allowed_tools_additional: list[str] = field(default_factory=list)
     allowed_skills: list[str] = field(default_factory=list)
+    model: str | None = None
     effort: str | None = None
     compact_pct: int | None = None
     on_start: list[str] = field(default_factory=list)
@@ -77,6 +78,7 @@ def load_config(path: Path) -> AssistantConfig:
             avatar_url=(agent_raw or {}).get("avatar_url"),
             allowed_tools_additional=(agent_raw or {}).get("allowed_tools_additional") or [],
             allowed_skills=(agent_raw or {}).get("allowed_skills") or [],
+            model=(agent_raw or {}).get("model"),
             effort=agent_effort,
             compact_pct=agent_compact_pct,
             on_start=(agent_raw or {}).get("on_start") or [],

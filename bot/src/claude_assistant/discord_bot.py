@@ -99,6 +99,7 @@ def build_agent_process(
     the command construction stays in one place.
     """
     agent_config = config.agents.get(name)
+    model = (agent_config.model if agent_config and agent_config.model else config.model)
     effort = (agent_config.effort if agent_config and agent_config.effort else config.effort)
     compact_pct = (agent_config.compact_pct if agent_config and agent_config.compact_pct else config.compact_pct)
     return AgentProcess(
@@ -107,7 +108,7 @@ def build_agent_process(
         agent_name=name,
         agent_definition=agent_definition,
         allowed_tools_additional=agent_config.allowed_tools_additional if agent_config else [],
-        model=config.model,
+        model=model,
         disallowed_skills=disallowed_skills,
         effort=effort,
         compact_pct=compact_pct,
