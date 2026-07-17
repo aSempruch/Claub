@@ -12,18 +12,23 @@ import sys
 import pytest
 
 # MCP is baked into the image from the repo's mcps/ dir (COPY mcps/ /app/mcps/).
+# Load helpers.py under a unique module name — several MCPs have a helpers.py,
+# so a bare `import helpers` resolves to whichever MCP's test imported first.
+import importlib.util
+
 _FILE_DOWNLOAD_DIR = os.path.join(
     os.path.dirname(__file__), "..", "..", "mcps", "file-download"
 )
-sys.path.insert(0, _FILE_DOWNLOAD_DIR)
-
-from helpers import (  # noqa: E402
-    assert_host_allowed,
-    is_blocked_ip,
-    read_capped,
-    resolve_safe_dest,
-    validate_url,
+_spec = importlib.util.spec_from_file_location(
+    "file_download_helpers", os.path.join(_FILE_DOWNLOAD_DIR, "helpers.py")
 )
+_helpers = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_helpers)
+assert_host_allowed = _helpers.assert_host_allowed
+is_blocked_ip = _helpers.is_blocked_ip
+read_capped = _helpers.read_capped
+resolve_safe_dest = _helpers.resolve_safe_dest
+validate_url = _helpers.validate_url
 
 
 class TestResolveSafeDest:

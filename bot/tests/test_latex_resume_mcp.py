@@ -8,12 +8,20 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-# Add helpers to path (helpers.py has no module-level side effects)
+# Load helpers.py under a unique module name (helpers.py has no module-level
+# side effects). Several MCPs have a helpers.py, so a bare `import helpers`
+# resolves to whichever MCP's test imported first — load by file path instead.
 # MCP servers live in ~/docker/claub/mcps/ (instance config, bind-mounted into container)
-_LATEX_RESUME_DIR = os.path.expanduser("~/docker/claub/mcps/latex-resume")
-sys.path.insert(0, _LATEX_RESUME_DIR)
+import importlib.util
 
-from helpers import parse_page_count, resolve_safe_path
+_LATEX_RESUME_DIR = os.path.expanduser("~/docker/claub/mcps/latex-resume")
+_spec = importlib.util.spec_from_file_location(
+    "latex_resume_helpers", os.path.join(_LATEX_RESUME_DIR, "helpers.py")
+)
+_helpers = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_helpers)
+parse_page_count = _helpers.parse_page_count
+resolve_safe_path = _helpers.resolve_safe_path
 
 
 class TestResolveSafePath:
@@ -80,9 +88,17 @@ class TestCompileLatex:
         self.pdf_file = tmp_path / "main.pdf"
         # Import server with patched env and workspace
         monkeypatch.setenv("CLAUB_AGENT_NAME", "test-agent")
-        if "server" in sys.modules:
-            del sys.modules["server"]
-        import server
+        # server.py does `from helpers import ...`, and another MCP's test may
+        # have cached a different bare `helpers`/`server` — clear both and
+        # import with the latex-resume dir on sys.path only for this import.
+        sys.modules.pop("server", None)
+        sys.modules.pop("helpers", None)
+        sys.path.insert(0, _LATEX_RESUME_DIR)
+        try:
+            import server
+        finally:
+            sys.path.remove(_LATEX_RESUME_DIR)
+            sys.modules.pop("helpers", None)
         server.WORKSPACE_DIR = self.workspace
         self.compile_latex = server.compile_latex
 
