@@ -78,10 +78,11 @@ HEADERS = {
 }
 
 LANG_IDS = {
-    "cpp": 0, "java": 1, "python": 2, "c": 3, "csharp": 4,
-    "javascript": 5, "ruby": 6, "swift": 7, "golang": 8, "kotlin": 9,
-    "scala": 10, "python3": 11, "typescript": 12, "rust": 13, "php": 14,
-    "racket": 15, "erlang": 16, "elixir": 17, "dart": 18,
+    "cpp": 0, "java": 1, "python": 2, "mysql": 3, "c": 4,
+    "csharp": 5, "javascript": 6, "ruby": 7, "bash": 8, "swift": 9,
+    "golang": 10, "python3": 11, "scala": 12, "kotlin": 13, "mssql": 14,
+    "oraclesql": 15, "rust": 18, "php": 19, "typescript": 20, "racket": 21,
+    "erlang": 22, "elixir": 23, "dart": 24, "pythondata": 25, "postgresql": 28,
 }
 
 def _auth_headers(slug: str) -> dict[str, str]:

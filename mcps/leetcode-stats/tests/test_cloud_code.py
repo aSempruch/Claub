@@ -42,9 +42,17 @@ def test_lang_ids_contains_python3():
 
 
 def test_lang_ids_contains_all_expected():
-    assert len(LANG_IDS) == 19
+    # Values verified against LeetCode's own `languageList` GraphQL query.
+    assert len(LANG_IDS) == 25
     assert LANG_IDS["cpp"] == 0
-    assert LANG_IDS["dart"] == 18
+    assert LANG_IDS["mysql"] == 3
+    assert LANG_IDS["c"] == 4
+    assert LANG_IDS["javascript"] == 6
+    assert LANG_IDS["golang"] == 10
+    assert LANG_IDS["mssql"] == 14
+    assert LANG_IDS["rust"] == 18
+    assert LANG_IDS["dart"] == 24
+    assert LANG_IDS["postgresql"] == 28
 
 
 def test_auth_headers_returns_complete_headers(token_file):
