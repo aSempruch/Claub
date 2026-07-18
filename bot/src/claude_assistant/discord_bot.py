@@ -343,6 +343,10 @@ class AssistantBot:
             await self._handle_stop(message)
             return
 
+        if content == "/model" or content.startswith("/model "):
+            await self._handle_model(message)
+            return
+
         agent_name = self.router.route(channel_id)
         if agent_name is None:
             return
@@ -462,6 +466,45 @@ class AssistantBot:
             log.info("/stop process stopped for %s", agent_name)
         self._last_activity.pop(agent_name, None)
         await message.channel.send(f"Agent `{agent_name}` stopped.")
+
+    async def _handle_model(self, message: discord.Message) -> None:
+        agent_name = self.router.route(str(message.channel.id))
+        if agent_name is None:
+            return
+
+        arg = message.content.strip()[len("/model"):].strip()
+        agent_config = self.config.agents.get(agent_name)
+        config_model = (
+            agent_config.model if agent_config and agent_config.model else self.config.model
+        )
+        override = self.sessions.get_model(agent_name)
+
+        if not arg:
+            if override:
+                await message.channel.send(f"Model: `{override}` (session override)")
+            elif config_model:
+                await message.channel.send(f"Model: `{config_model}` (config default)")
+            else:
+                await message.channel.send("Model: CLI default")
+            return
+
+        previous = override or config_model or "CLI default"
+        if arg == "reset":
+            self.sessions.clear_model(agent_name)
+            new = config_model or "CLI default"
+            reply = f"Model reset to `{new}` (was `{previous}`). Takes effect on next message."
+        else:
+            self.sessions.set_model(agent_name, arg)
+            reply = f"Model set to `{arg}` (was `{previous}`). Takes effect on next message."
+
+        log.info("/model for %s: %r", agent_name, arg)
+        self._reaped.add(agent_name)
+        process = self._processes.get(agent_name)
+        if process:
+            await process.stop()
+            del self._processes[agent_name]
+        self._last_activity.pop(agent_name, None)
+        await message.channel.send(reply)
 
     # --- Webhook sending ---
 

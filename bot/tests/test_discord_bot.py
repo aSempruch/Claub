@@ -290,3 +290,73 @@ def test_build_agent_process_model_precedence(tmp_path: Path) -> None:
     common["config"] = cfg_no_agent_model
     assert build_agent_process(**common).model == "haiku"
     assert build_agent_process(**common, model_override="opus").model == "opus"
+
+
+def _model_msg(channel_id: int, content: str) -> MagicMock:
+    msg = MagicMock()
+    msg.channel.id = channel_id
+    msg.channel.send = AsyncMock()
+    msg.content = content
+    return msg
+
+
+@pytest.mark.asyncio
+async def test_handle_model_set(bot: AssistantBot) -> None:
+    bot.sessions.get_model.return_value = None
+    mock_process = MagicMock()
+    mock_process.stop = AsyncMock()
+    bot._processes["main"] = mock_process
+
+    msg = _model_msg(100, "/model opus")
+    await bot._handle_model(msg)
+
+    bot.sessions.set_model.assert_called_with("main", "opus")
+    mock_process.stop.assert_called_once()
+    assert "main" not in bot._processes
+    reply = msg.channel.send.call_args.args[0]
+    assert "`opus`" in reply
+
+
+@pytest.mark.asyncio
+async def test_handle_model_reset(bot: AssistantBot) -> None:
+    bot.sessions.get_model.return_value = "opus"
+    msg = _model_msg(100, "/model reset")
+    await bot._handle_model(msg)
+    bot.sessions.clear_model.assert_called_with("main")
+    bot.sessions.set_model.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_handle_model_show_override(bot: AssistantBot) -> None:
+    bot.sessions.get_model.return_value = "opus"
+    msg = _model_msg(100, "/model")
+    await bot._handle_model(msg)
+    bot.sessions.set_model.assert_not_called()
+    bot.sessions.clear_model.assert_not_called()
+    reply = msg.channel.send.call_args.args[0]
+    assert "`opus`" in reply and "override" in reply
+
+
+@pytest.mark.asyncio
+async def test_handle_model_show_default(bot: AssistantBot) -> None:
+    bot.sessions.get_model.return_value = None
+    msg = _model_msg(100, "/model")
+    await bot._handle_model(msg)
+    reply = msg.channel.send.call_args.args[0]
+    assert "CLI default" in reply
+
+
+@pytest.mark.asyncio
+async def test_handle_model_unknown_channel(bot: AssistantBot) -> None:
+    msg = _model_msg(999, "/model opus")
+    await bot._handle_model(msg)
+    bot.sessions.set_model.assert_not_called()
+    msg.channel.send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_handle_message_dispatches_model(bot: AssistantBot) -> None:
+    bot.sessions.get_model.return_value = None
+    msg = _model_msg(100, "/model opus")
+    await bot._handle_message(msg)
+    bot.sessions.set_model.assert_called_with("main", "opus")
