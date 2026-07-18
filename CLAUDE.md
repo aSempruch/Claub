@@ -330,10 +330,13 @@ The container provides isolation — no macOS Seatbelt sandbox needed. Agents ru
 
 - `/clear` — stops agent process for current channel, clears session (next message starts fresh)
 - `/clear {agent}` — same, but targets a specific agent by name
+- `/model` — show the current model for this channel's agent (override or config default)
+- `/model {name}` — switch the agent to a model (e.g. `sonnet`, `opus`, or a full model ID); persists until `/clear` or `/model reset`
+- `/model reset` — revert to the `agents.yaml` / CLI default model
 
 ## Session Persistence
 
-Session IDs are stored in `/claub/data/sessions.json` (agent name → session UUID). On startup or message send, the bot passes `--resume {session_id}` to maintain conversation context. If resume fails, the session is cleared and a fresh one starts.
+Session state is stored in `/claub/data/sessions.json` (agent name → `{session_id, model}`; legacy bare-string files migrate automatically). On startup or message send, the bot passes `--resume {session_id}` to maintain conversation context. If resume fails, the session is cleared (including any `/model` override) and a fresh one starts.
 
 ## Service Management
 
