@@ -268,3 +268,25 @@ async def test_deliver_result_logs_error_when_all_attempts_fail(
         "main" in r.message and "1790" in r.message
         for r in caplog.records if r.levelname == "ERROR"
     )
+
+
+def test_build_agent_process_model_precedence(tmp_path: Path) -> None:
+    from claude_assistant.discord_bot import build_agent_process
+
+    cfg = AssistantConfig(
+        agents={"main": AgentConfig(channel_id="1", model="sonnet")},
+        model="haiku",
+    )
+    common: dict[str, Any] = dict(
+        name="main", workspace=tmp_path, config=cfg,
+        mcp_configs=[], agent_definition=None, disallowed_skills=[],
+    )
+    assert build_agent_process(**common, model_override="opus").model == "opus"
+    assert build_agent_process(**common).model == "sonnet"
+
+    cfg_no_agent_model = AssistantConfig(
+        agents={"main": AgentConfig(channel_id="1")}, model="haiku",
+    )
+    common["config"] = cfg_no_agent_model
+    assert build_agent_process(**common).model == "haiku"
+    assert build_agent_process(**common, model_override="opus").model == "opus"
