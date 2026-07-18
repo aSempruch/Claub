@@ -14,6 +14,9 @@ services:
       - claude-home:/root/.claude
       - ${CLAUB_DATA_PATH:?Set CLAUB_DATA_PATH in .env}:/claub
       - ${CLAUB_DATA_PATH}:${CLAUB_DATA_PATH}
+      - /Users/you/repos/shared/data:/claub/workspaces/career/shared-data
+      - /Users/you/repos/shared/data:/claub/workspaces/leetcode-coach/shared-data
+      - /Users/you/repos/shared/data:/claub/workspaces/analyst/shared-data
       - /tmp/playwright:/tmp/playwright:ro
     init: true
     restart: unless-stopped
