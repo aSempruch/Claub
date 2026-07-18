@@ -235,6 +235,9 @@ class AssistantBot:
             await process.start(session_id)
         except Exception:
             log.exception("Failed to start agent %s", name)
+            if self.sessions.get_model(name):
+                log.warning("Dropping model override for %s after failed start", name)
+                self.sessions.clear_model(name)
             if session_id:
                 log.info("Retrying %s without --resume", name)
                 self.sessions.delete(name)

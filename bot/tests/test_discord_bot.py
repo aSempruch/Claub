@@ -360,3 +360,15 @@ async def test_handle_message_dispatches_model(bot: AssistantBot) -> None:
     msg = _model_msg(100, "/model opus")
     await bot._handle_message(msg)
     bot.sessions.set_model.assert_called_with("main", "opus")
+
+
+@pytest.mark.asyncio
+async def test_start_failure_drops_model_override(bot: AssistantBot, tmp_path: Path) -> None:
+    bot.sessions.get.return_value = None
+    bot.sessions.get_model.return_value = "not-a-model"
+    with patch(
+        "claude_assistant.discord_bot.build_agent_process"
+    ) as mock_build:
+        mock_build.return_value.start = AsyncMock(side_effect=RuntimeError("bad model"))
+        await bot._start_agent("main")
+    bot.sessions.clear_model.assert_called_with("main")
