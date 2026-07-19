@@ -408,6 +408,48 @@ class TestInactivityTimeout:
             await feeder_task
 
 
+class TestSendMessageRaw:
+    """send_message(raw=...) controls the first-message time prefix."""
+
+    def _make_proc(self, workspace: Path) -> tuple[AgentProcess, list[str]]:
+        proc = AgentProcess(workspace=workspace, agent_name="testagent")
+        proc._process = MagicMock()
+        proc._ready.set()
+        proc._first_message = True
+        written: list[str] = []
+
+        def capture(data: bytes) -> None:
+            written.append(data.decode())
+
+        proc._process.stdin = MagicMock()
+        proc._process.stdin.write = capture
+        proc._process.stdin.drain = AsyncMock()
+        proc._process.stdout = asyncio.StreamReader()
+        proc._process.stdout.feed_data(
+            json.dumps({"type": "result", "result": "done"}).encode() + b"\n"
+        )
+        proc._process.stdout.feed_eof()
+        return proc, written
+
+    @pytest.mark.asyncio
+    async def test_raw_skips_prefix_and_preserves_first_message(self, workspace: Path) -> None:
+        proc, written = self._make_proc(workspace)
+        await proc.send_message("/compact", raw=True)
+        payload = json.loads(written[0])
+        assert payload["message"]["content"] == "/compact"
+        # The prefix is reserved for the next real message.
+        assert proc._first_message is True
+
+    @pytest.mark.asyncio
+    async def test_non_raw_adds_prefix_and_consumes_first_message(self, workspace: Path) -> None:
+        proc, written = self._make_proc(workspace)
+        await proc.send_message("hello", raw=False)
+        payload = json.loads(written[0])
+        assert payload["message"]["content"].endswith("hello")
+        assert payload["message"]["content"].startswith("[current time:")
+        assert proc._first_message is False
+
+
 class TestApplyReplySentinel:
     """Direct unit tests for the sentinel-stripping helper."""
 

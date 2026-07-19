@@ -346,6 +346,10 @@ class AssistantBot:
             await self._handle_stop(message)
             return
 
+        if content == "/compact":
+            await self._handle_compact(message)
+            return
+
         if content == "/model" or content.startswith("/model "):
             await self._handle_model(message)
             return
@@ -386,12 +390,14 @@ class AssistantBot:
 
         await self._deliver_result(message.channel, agent_name, result)
 
-    async def _send_with_restart(self, agent_name: str, content: str) -> str:
+    async def _send_with_restart(
+        self, agent_name: str, content: str, raw: bool = False
+    ) -> str:
         """Send a message to an agent, restarting the process on failure."""
         self._last_activity[agent_name] = time.monotonic()
         process = await self._get_or_start_process(agent_name)
         try:
-            result = await process.send_message(content)
+            result = await process.send_message(content, raw=raw)
         except AuthenticationError:
             raise
         except RuntimeError:
@@ -399,7 +405,7 @@ class AssistantBot:
                 raise
             log.exception("Agent %s error, restarting", agent_name)
             process = await self._restart_process(agent_name)
-            result = await process.send_message(content)
+            result = await process.send_message(content, raw=raw)
         self._last_activity[agent_name] = time.monotonic()
         return result
 
@@ -469,6 +475,37 @@ class AssistantBot:
             log.info("/stop process stopped for %s", agent_name)
         self._last_activity.pop(agent_name, None)
         await message.channel.send(f"Agent `{agent_name}` stopped.")
+
+    async def _handle_compact(self, message: discord.Message) -> None:
+        agent_name = self.router.route(str(message.channel.id))
+        if agent_name is None:
+            return
+
+        log.info("/compact received for %s (chan=%s)", agent_name, message.channel.id)
+        await message.channel.send(f"Compacting `{agent_name}`…")
+        async with _safe_typing(message.channel):
+            try:
+                # raw=True: send the literal "/compact" slash command without the
+                # first-message time prefix that would otherwise corrupt it.
+                result = await self._send_with_restart(agent_name, "/compact", raw=True)
+            except AuthenticationError:
+                log.error("Claude authentication failed for %s", agent_name)
+                await message.channel.send(
+                    "Claude authentication expired. Re-authenticate with `claude` on the host and restart."
+                )
+                return
+            except RuntimeError as e:
+                log.exception("Compaction failed for %s", agent_name)
+                await message.channel.send(f"Compaction failed: {e}")
+                return
+
+            process = self._processes.get(agent_name)
+            if process and process.session_id:
+                self.sessions.set(agent_name, process.session_id)
+
+        # A successful compaction returns an empty result; the CLI returns a
+        # short message (e.g. "Not enough messages to compact.") when it no-ops.
+        await message.channel.send(result.strip() or "Compaction complete.")
 
     async def _handle_model(self, message: discord.Message) -> None:
         agent_name = self.router.route(str(message.channel.id))

@@ -287,6 +287,7 @@ class AgentProcess:
         content: str,
         timeout: float = 3600,
         inactivity_timeout: float = 300,
+        raw: bool = False,
     ) -> str:
         """Send a message and return the result.
 
@@ -295,6 +296,11 @@ class AgentProcess:
         - ``inactivity_timeout`` (default 5min): max gap between stream-json
           events. Catches silent wedges (stuck MCP child, hung tool call)
           where the subprocess is alive but not emitting.
+
+        ``raw`` sends ``content`` verbatim: it skips the first-message
+        ``[current time: ...]`` prefix (which would corrupt a slash command
+        like ``/compact``) and leaves ``_first_message`` untouched so the next
+        real user message still gets its time prefix.
         """
         try:
             async with asyncio.timeout(30):
@@ -306,7 +312,7 @@ class AgentProcess:
         if not self._process or not self._process.stdin or not self._process.stdout:
             raise RuntimeError(f"Agent {self.agent_name} process not started")
         async with self._lock:
-            if self._first_message:
+            if self._first_message and not raw:
                 now = datetime.now().strftime("%A, %B %d, %Y at %I:%M %p")
                 content = f"[current time: {now}] {content}"
                 self._first_message = False

@@ -330,6 +330,8 @@ The container provides isolation — no macOS Seatbelt sandbox needed. Agents ru
 
 - `/clear` — stops agent process for current channel, clears session (next message starts fresh)
 - `/clear {agent}` — same, but targets a specific agent by name
+- `/stop` — stops the current channel's agent process (keeps the session, unlike `/clear`)
+- `/compact` — compacts the current channel's agent session (summarizes history to free context, keeping the same session). Posts a start notice, then a completion notice. Sends the literal `/compact` slash command into the stream-json process
 - `/model` — show the current model for this channel's agent (override or config default)
 - `/model {name}` — switch the agent to a model (e.g. `sonnet`, `opus`, or a full model ID); persists until `/clear` or `/model reset`
 - `/model reset` — revert to the `agents.yaml` / CLI default model

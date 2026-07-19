@@ -363,6 +363,63 @@ async def test_handle_message_dispatches_model(bot: AssistantBot) -> None:
 
 
 @pytest.mark.asyncio
+async def test_handle_compact_sends_raw_command_and_two_messages(bot: AssistantBot) -> None:
+    msg = MagicMock()
+    msg.channel.id = 100
+    msg.channel.send = AsyncMock()
+    msg.content = "/compact"
+    with patch.object(
+        bot, "_send_with_restart", new=AsyncMock(return_value="")
+    ) as mock_send:
+        await bot._handle_compact(msg)
+    # Sends the literal slash command with raw=True so the time prefix
+    # doesn't corrupt it.
+    mock_send.assert_awaited_once_with("main", "/compact", raw=True)
+    # Two channel messages: a start notice and a completion notice.
+    sent = [c.args[0] for c in msg.channel.send.await_args_list]
+    assert any("Compacting" in s for s in sent)
+    assert "Compaction complete." in sent
+
+
+@pytest.mark.asyncio
+async def test_handle_compact_surfaces_cli_noop_message(bot: AssistantBot) -> None:
+    msg = MagicMock()
+    msg.channel.id = 100
+    msg.channel.send = AsyncMock()
+    msg.content = "/compact"
+    with patch.object(
+        bot, "_send_with_restart",
+        new=AsyncMock(return_value="Not enough messages to compact."),
+    ):
+        await bot._handle_compact(msg)
+    sent = [c.args[0] for c in msg.channel.send.await_args_list]
+    assert "Not enough messages to compact." in sent
+
+
+@pytest.mark.asyncio
+async def test_handle_compact_unknown_channel(bot: AssistantBot) -> None:
+    msg = MagicMock()
+    msg.channel.id = 999
+    msg.channel.send = AsyncMock()
+    msg.content = "/compact"
+    with patch.object(bot, "_send_with_restart", new=AsyncMock()) as mock_send:
+        await bot._handle_compact(msg)
+    mock_send.assert_not_awaited()
+    msg.channel.send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_handle_message_dispatches_compact(bot: AssistantBot) -> None:
+    msg = MagicMock()
+    msg.channel.id = 100
+    msg.channel.send = AsyncMock()
+    msg.content = "/compact"
+    with patch.object(bot, "_handle_compact", new=AsyncMock()) as mock_compact:
+        await bot._handle_message(msg)
+    mock_compact.assert_awaited_once_with(msg)
+
+
+@pytest.mark.asyncio
 async def test_start_failure_drops_model_override(bot: AssistantBot, tmp_path: Path) -> None:
     bot.sessions.get.return_value = None
     bot.sessions.get_model.return_value = "not-a-model"
