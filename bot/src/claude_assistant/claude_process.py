@@ -123,6 +123,11 @@ class AgentProcess:
         elif self.agent_name:
             cmd.extend(["--agent", self.agent_name])
         if self.mcp_configs:
+            # Strict: only these configs. Otherwise connectors synced from the
+            # authenticated claude.ai account leak in, and the model reaches for
+            # e.g. mcp__claude_ai_Gmail__* over the configured google_* MCP —
+            # a tool the settings.json allow-list denies with no way to approve.
+            cmd.append("--strict-mcp-config")
             cmd.extend(["--mcp-config"] + [str(p) for p in self.mcp_configs])
         if self.allowed_tools_additional:
             cmd.extend(["--allowedTools"] + self.allowed_tools_additional)

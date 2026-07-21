@@ -168,6 +168,30 @@ class TestAgentProcess:
         assert not proc._is_result_event(event)
 
     @pytest.mark.asyncio
+    async def test_build_command_mcp_configs_are_strict(
+        self, workspace: Path
+    ) -> None:
+        # --strict-mcp-config confines the agent to the configs we pass, so
+        # connectors synced from the authenticated claude.ai account (e.g.
+        # mcp__claude_ai_Gmail__*) never reach the tool list. Without it the
+        # model picks the connector over the configured MCP and gets denied.
+        proc = AgentProcess(
+            workspace=workspace,
+            agent_name="main",
+            mcp_configs=[Path("/claub/config/mcp.json")],
+        )
+        cmd = proc._build_command(session_id=None)
+        assert "--strict-mcp-config" in cmd
+        assert cmd[cmd.index("--mcp-config") + 1] == "/claub/config/mcp.json"
+
+    @pytest.mark.asyncio
+    async def test_build_command_no_strict_flag_without_mcp_configs(
+        self, workspace: Path
+    ) -> None:
+        proc = AgentProcess(workspace=workspace, agent_name="main")
+        assert "--strict-mcp-config" not in proc._build_command(session_id=None)
+
+    @pytest.mark.asyncio
     async def test_build_command_disallowed_skills(
         self, workspace: Path
     ) -> None:

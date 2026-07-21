@@ -10,6 +10,9 @@ services:
       - HASS_TOKEN=${HASS_TOKEN}
       - TZ=${TZ:-America/New_York}
       - CLAUB_HOST_PATH=${CLAUB_DATA_PATH}
+      # Keep the Dockerfile's pinned CLI version — the CLI otherwise
+      # self-updates inside the running container, silently defeating the pin.
+      - DISABLE_AUTOUPDATER=1
     volumes:
       - claude-home:/root/.claude
       - ${CLAUB_DATA_PATH:?Set CLAUB_DATA_PATH in .env}:/claub
