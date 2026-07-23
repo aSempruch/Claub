@@ -429,3 +429,67 @@ async def test_start_failure_drops_model_override(bot: AssistantBot, tmp_path: P
         mock_build.return_value.start = AsyncMock(side_effect=RuntimeError("bad model"))
         await bot._start_agent("main")
     bot.sessions.clear_model.assert_called_with("main")
+
+
+# --- Webhook username model tag: "Journalist [opus]" ---
+
+
+def _webhook_bot(tmp_path: Path, *, agent_model: str | None = None,
+                 global_model: str | None = None) -> AssistantBot:
+    from claude_assistant.schedule_store import ScheduleStore
+    cfg = AssistantConfig(
+        agents={"main": AgentConfig(channel_id="100", display_name="Journalist",
+                                    model=agent_model)},
+        model=global_model,
+    )
+    return AssistantBot(
+        config=cfg,
+        workspaces_dir=tmp_path / "workspaces",
+        session_store=MagicMock(),
+        schedule_store=ScheduleStore(tmp_path / "schedules.json"),
+    )
+
+
+async def _webhook_username(bot: AssistantBot) -> str:
+    webhook = MagicMock()
+    webhook.send = AsyncMock()
+    with patch.object(bot, "_get_or_create_webhook", new=AsyncMock(return_value=webhook)):
+        await bot._webhook_send(MagicMock(), "main", "hi")
+    return webhook.send.call_args.kwargs["username"]
+
+
+@pytest.mark.asyncio
+async def test_webhook_username_tags_session_override(tmp_path: Path) -> None:
+    bot = _webhook_bot(tmp_path, agent_model="sonnet")
+    bot.sessions.get_model.return_value = "opus"
+    assert await _webhook_username(bot) == "Journalist [opus]"
+
+
+@pytest.mark.asyncio
+async def test_webhook_username_tags_config_model_verbatim(tmp_path: Path) -> None:
+    bot = _webhook_bot(tmp_path, agent_model="claude-opus-4-8")
+    bot.sessions.get_model.return_value = None
+    assert await _webhook_username(bot) == "Journalist [claude-opus-4-8]"
+
+
+@pytest.mark.asyncio
+async def test_webhook_username_tags_global_model(tmp_path: Path) -> None:
+    bot = _webhook_bot(tmp_path, global_model="haiku")
+    bot.sessions.get_model.return_value = None
+    assert await _webhook_username(bot) == "Journalist [haiku]"
+
+
+@pytest.mark.asyncio
+async def test_webhook_username_plain_when_no_model_anywhere(tmp_path: Path) -> None:
+    bot = _webhook_bot(tmp_path)
+    bot.sessions.get_model.return_value = None
+    assert await _webhook_username(bot) == "Journalist"
+
+
+@pytest.mark.asyncio
+async def test_webhook_username_truncated_to_discord_limit(tmp_path: Path) -> None:
+    bot = _webhook_bot(tmp_path, agent_model="m" * 100)
+    bot.sessions.get_model.return_value = None
+    username = await _webhook_username(bot)
+    assert len(username) == 80
+    assert username.startswith("Journalist [m")

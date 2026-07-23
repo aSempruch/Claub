@@ -651,10 +651,23 @@ class AssistantBot:
         if files:
             kwargs["files"] = files
         if agent_config and agent_config.display_name:
-            kwargs["username"] = agent_config.display_name
+            username = agent_config.display_name
+            model = self._effective_model(agent_name)
+            if model:
+                username = f"{username} [{model}]"
+            kwargs["username"] = username[:80]  # Discord webhook username limit
         if agent_config and agent_config.avatar_url:
             kwargs["avatar_url"] = agent_config.avatar_url
         await webhook.send(**kwargs)
+
+    def _effective_model(self, agent_name: str) -> str | None:
+        """Model the agent's process runs with: override → agent config → global."""
+        agent_config = self.config.agents.get(agent_name)
+        return (
+            self.sessions.get_model(agent_name)
+            or (agent_config.model if agent_config else None)
+            or self.config.model
+        )
 
     # --- Utilities ---
 
