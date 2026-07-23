@@ -14,6 +14,9 @@ ENV PATH="/root/.local/bin:$PATH"
 # Install Claude CLI (pinned — bump deliberately, not via floating "latest")
 RUN npm install -g @anthropic-ai/claude-code@2.1.170
 
+# Notion MCP server (pinned) — used by agents via per-agent .mcp.json
+RUN npm install -g @notionhq/notion-mcp-server@2.4.1
+
 # Install Python deps (deps layer cached separately from source)
 WORKDIR /app/bot
 COPY bot/pyproject.toml bot/uv.lock ./
