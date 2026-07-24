@@ -457,7 +457,7 @@ class AssistantBot:
             await process.stop()
             del self._processes[agent_name]
         self._last_activity.pop(agent_name, None)
-        self.sessions.delete(agent_name)
+        self.sessions.clear_session(agent_name)
         await message.channel.send(f"Agent `{agent_name}` reset.")
 
     async def _handle_stop(self, message: discord.Message) -> None:

@@ -134,7 +134,8 @@ async def test_handle_reset_main(bot: AssistantBot) -> None:
     mock_process.stop = AsyncMock()
     bot._processes["main"] = mock_process
     await bot._handle_reset(msg)
-    bot.sessions.delete.assert_called_with("main")
+    bot.sessions.clear_session.assert_called_with("main")
+    bot.sessions.delete.assert_not_called()
     mock_process.stop.assert_called_once()
     assert "main" not in bot._processes
 
@@ -146,7 +147,7 @@ async def test_handle_reset_agent(bot: AssistantBot) -> None:
     msg.channel.send = AsyncMock()
     msg.content = "/clear"
     await bot._handle_reset(msg)
-    bot.sessions.delete.assert_called_with("journalist")
+    bot.sessions.clear_session.assert_called_with("journalist")
 
 
 @pytest.mark.asyncio
@@ -155,7 +156,7 @@ async def test_handle_reset_unknown_channel(bot: AssistantBot) -> None:
     msg.channel.id = 999
     msg.channel.send = AsyncMock()
     await bot._handle_reset(msg)
-    bot.sessions.delete.assert_not_called()
+    bot.sessions.clear_session.assert_not_called()
 
 
 @pytest.mark.asyncio

@@ -35,6 +35,15 @@ class SessionStore:
         self._data.setdefault(agent, {})["model"] = model
         self._save()
 
+    def clear_session(self, agent: str) -> None:
+        record = self._data.get(agent)
+        if record is None:
+            return
+        record.pop("session_id", None)
+        if not record:
+            self._data.pop(agent, None)
+        self._save()
+
     def clear_model(self, agent: str) -> None:
         record = self._data.get(agent)
         if record is None:

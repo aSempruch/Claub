@@ -89,6 +89,20 @@ def test_clear_model_keeps_session(tmp_path: Path) -> None:
     assert store.get("main") == "uuid-123"
 
 
+def test_clear_session_keeps_model(tmp_path: Path) -> None:
+    store = SessionStore(tmp_path / "sessions.json")
+    store.set("main", "uuid-123")
+    store.set_model("main", "opus")
+    store.clear_session("main")
+    assert store.get("main") is None
+    assert store.get_model("main") == "opus"
+
+
+def test_clear_session_nonexistent(tmp_path: Path) -> None:
+    store = SessionStore(tmp_path / "sessions.json")
+    store.clear_session("main")  # should not raise
+
+
 def test_clear_model_nonexistent(tmp_path: Path) -> None:
     store = SessionStore(tmp_path / "sessions.json")
     store.clear_model("main")  # should not raise
