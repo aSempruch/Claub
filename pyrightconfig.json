@@ -1,0 +1,19 @@
+{
+  "venvPath": "bot",
+  "venv": ".venv",
+  "pythonVersion": "3.12",
+  "executionEnvironments": [
+    {
+      "root": "bot",
+      "extraPaths": ["bot/src"]
+    },
+    {
+      "root": "mcps/hass",
+      "extraPaths": ["mcps/hass/.venv/lib/python3.12/site-packages"]
+    },
+    {
+      "root": "mcps/leetcode-stats",
+      "extraPaths": ["mcps/leetcode-stats/.venv/lib/python3.12/site-packages"]
+    }
+  ]
+}
