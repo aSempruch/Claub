@@ -2,27 +2,21 @@
 
 A Discord bot that bridges Discord channels to Claude Code CLI sessions. Each agent gets its own channel and a persistent streaming process, with optional cron schedules. Runs in Docker.
 
-> This file is [Claude Code context](https://docs.anthropic.com/en/docs/claude-code/memory#claudemd) and detailed project documentation. See [`README.md`](README.md) for the public-facing overview and [`example/`](example/) for a working example configuration.
+> This file is [Claude Code context](https://docs.anthropic.com/en/docs/claude-code/memory#claudemd) — the always-loaded orientation map. Subsystem detail lives in skills (see below). [`README.md`](README.md) is the public overview and first-time setup; [`example/`](example/) is a working config.
 
-## Quick Start
+## Detailed Guides (skills, loaded on demand)
 
-```bash
-# Create your instance directory with config, data, workspaces, and mcps
-mkdir -p ~/docker/claub/{config/agents,data,workspaces,mcps}
+| Skill | Use when |
+|---|---|
+| `add-claub-agent` | Adding/editing an agent, or deciding which config level behavior belongs in |
+| `claub-playwright` | Browser profiles, the bridge daemon, file uploads, zoom/captcha issues |
+| `claub-mcp-servers` | Working on an existing MCP (Nextcloud, HASS, Google, git, file-download) |
+| `build-mcp-server` | Building a **new** MCP server |
+| `claub-schedules` | schedules.json, density limits, one-shot schedules, firing history |
+| `claub-logs` | Reading `docker compose logs`, or driving an agent with the debug CLI |
+| `lauren-deployment` / `stas-deployment` | The other two instances on this host |
 
-# Add your config files (agents.yaml, CLAUDE.md, settings.json, mcp.json, agents/*.md)
-# See Configuration section below
-
-# Set your Discord bot token
-echo 'DISCORD_BOT_TOKEN=your-token' > .env
-
-# Build and start
-docker compose up -d
-
-# Authenticate Claude CLI (one-time, credentials persist in named volume)
-docker exec -it claude-claub-1 claude
-# Follow login flow, then exit
-```
+Design specs for larger features live in `docs/superpowers/specs/`.
 
 ## Architecture
 
@@ -60,45 +54,43 @@ bot/                              # Python package (discord bot)
     config.py                     # Parses agents.yaml → AssistantConfig dataclasses
     discord_bot.py                # AssistantBot — routing, message handling, lifecycle
     claude_process.py             # AgentProcess — persistent stream-json process per agent
+    debug_agent.py                # Debug CLI — talk to an agent with its production config
     router.py                     # Channel ID → agent name mapping
     scheduler.py                  # APScheduler cron wrapper
     session.py                    # SessionStore — atomic JSON persistence of session IDs
     chunker.py                    # Splits long messages for Discord's 2000-char limit
-    mcp_server.py                 # FastMCP HTTP server — schedule management tools for agents
+    mcp_server.py                 # FastMCP HTTP server — schedules + agent messaging
     schedule_store.py             # ScheduleStore — atomic JSON persistence of schedules
   tests/                          # pytest + pytest-asyncio
 
-README.md                         # Public-facing project overview and highlights
+README.md                         # Public-facing project overview and first-time setup
 Dockerfile                        # Python 3.12 + Node.js + uv + Claude CLI
-entrypoint.sh                     # Copies config into ~/.claude/, starts bot
+entrypoint.sh                     # Copies config into ~/.claude/, uv syncs MCPs, starts bot
 docker-compose.yml                # Service definition with volumes — ALL docker compose commands run from this project root
-.dockerignore                     # Build context exclusions
 
-mcps/                             # MCP servers (baked into Docker image)
+mcps/                             # MCP servers baked into the image at /app/mcps/
   git/                            # Workspace-scoped git operations
   leetcode-stats/                 # LeetCode GraphQL API client
   nextcloud/                      # Nextcloud file sharing via WebDAV
+  hass/                           # Home Assistant — narrow typed wrappers
+  file-download/                  # Least-privilege URL → workspace fetch
 
+scripts/playwright-bridge/        # Host-side daemon managing per-agent browser MCPs
 example/                          # Starter configuration (sanitized)
-  config/                         # agents.yaml, CLAUDE.md, settings, MCP config
-    agents/                       # Agent identity prompts
-  workspaces/                     # Workspace living configs
+docs/                             # Specs, plans, investigations
 
 /claub/                           # Instance root inside container (bind-mounted from host)
   config/                         # All user-editable configuration
-    agents.yaml                   # Agent definitions, channel IDs
-    mcp.json                      # Shared MCP server config (e.g. Playwright)
+    agents.yaml                   # Agent definitions, channel IDs, groups, hooks
+    mcp.json                      # Shared MCP server config
     settings.json                 # Claude tool permissions (allow list)
     CLAUDE.md                     # Global agent guidelines (applies to all agents)
-    agents/                       # Agent system prompts and per-agent MCP configs
-      main.md                     # Main agent system prompt
-      journalist.md               # Journalist agent system prompt
-      journalist.mcp.json         # Optional per-agent MCP config
-  mcps/                           # Additional MCP servers (extend repo ones)
-  workspaces/                     # Runtime scratch dirs per agent (auto-created)
-    {name}/.claude-skills/        # Symlink → .claude/skills/ (agent-authored skills)
-  data/                           # sessions.json — session ID persistence
-                                  # schedules.json — dynamic schedule persistence
+    agents/{name}.md              # Agent system prompt
+    agents/{name}.mcp.json        # Optional per-agent MCP config
+  mcps/                           # Instance MCP servers (extend the baked-in ones)
+  workspaces/{name}/              # Runtime scratch dirs per agent (auto-created)
+    .claude-skills/               # Real dir; .claude/skills/ symlinks here
+  data/                           # sessions.json, schedules.json, firing_history.json
 ```
 
 ## Configuration
@@ -118,140 +110,38 @@ agents:
     channel_id: "987654321"
 ```
 
-An `agents.main` entry is required. Schedules are managed dynamically via the MCP server (see Schedule Management below) — not in `agents.yaml`.
+An `agents.main` entry is required. Agent names must match `[A-Za-z0-9_-]+` — they become MCP tool names and URL path segments. Schedules are **not** configured here; they're managed at runtime via MCP.
 
-### Schedule Management
-
-Schedules are managed dynamically at runtime via an embedded MCP server. Agents can create, list, and delete their own cron schedules using MCP tools (`mcp__schedules__list_schedules`, `mcp__schedules__create_schedule`, `mcp__schedules__delete_schedule`).
-
-Schedule data is persisted to `/claub/data/schedules.json` (machine-managed, not hand-edited):
-
-```json
-{
-  "agent_name": [
-    {
-      "id": "a1b2c3",
-      "cron": "0 9 * * *",
-      "prompt": "Do the thing",
-      "one_shot": false
-    }
-  ]
-}
-```
-
-- **`one_shot`**: If true, the schedule fires once and is then automatically deleted.
-- The bot's APScheduler syncs from this file on startup and immediately on mutations.
-- The MCP server runs on `127.0.0.1:9400` (configurable via `CLAUB_MCP_PORT` env var).
-- Agent name is passed via the `X-Agent-Name` HTTP header, resolved from the `${CLAUB_AGENT_NAME}` env var set in each agent's process.
-- Schedule changes trigger a notification in the agent's Discord channel.
-- **Density limits**: Schedule creation is globally rate-limited. At most 5 firings per rolling 24h window and 30 per rolling 7-day window across all agents combined. The check considers both projected future fire times (120-day horizon) and recent firing history.
-- **Firing history**: All schedule firings are logged to `/claub/data/firing_history.json` for debugging. Retention is configurable via `CLAUB_SCHEDULE_HISTORY_RETENTION_DAYS` env var (default 30 days).
+**Agent behavior is configured at three levels** (global rules → agent identity → self-modifiable workspace config). Getting this split right matters — see the `add-claub-agent` skill.
 
 ### Agent Messaging
 
-Agents listed together in a top-level `agent_groups` entry in `agents.yaml` can
-message each other via `mcp__agents__message_agent_{peer}` — one tool per
-reachable peer, so the roster is visible in the tool list without a lookup call.
-The call blocks: the receiver processes the message in its normal session and
-the reply returns as the tool result; nothing is posted to Discord.
+Agents listed together in a top-level `agent_groups` entry can message each other via `mcp__agents__message_agent_{peer}` — one tool per reachable peer. The call **blocks**: the receiver processes the message in its normal session and the reply returns as the tool result; nothing is posted to Discord.
 
-Each agent gets its **own** messaging MCP server, mounted at
-`/agents/{name}/mcp` on the same port as schedules, so the sender's identity
-comes from the mount path rather than the `X-Agent-Name` header. Agents in no
-group still get a mount (with zero tools) so their MCP connection succeeds. All
-servers share one wait-for graph — cycle detection spans the instance. The
-mcp.json URL uses `${CLAUB_AGENT_NAME}` for the path and
-`${CLAUB_MSG_PORT:-9400}` for the port, so the debug CLI can redirect agents to
-its own isolated server (`CLAUB_MSG_PORT` is set for debug runs, receivers are
-spawned with `--no-session-persistence`, and `sessions.json` is never touched).
-Agent names are validated as `[A-Za-z0-9_-]+` at config load since they become
-tool names and URL path segments.
-Safety: wait-for-graph cycle/depth rejection, 15-min sender wait cap (delivery
-shielded to completion), sender inactivity-watchdog exemption while blocked,
-and `MCP_TOOL_TIMEOUT` raised above the wait cap. Design:
-`docs/superpowers/specs/2026-07-24-agent-messaging-design.md`.
+Each agent gets its own messaging MCP mounted at `/agents/{name}/mcp`, so sender identity comes from the mount path rather than a header. All mounts share one wait-for graph, so cycle detection spans the instance. Safety: cycle/depth rejection, a 15-min sender wait cap, sender watchdog exemption while blocked, and `MCP_TOOL_TIMEOUT` raised above the cap.
 
-### Agent Context — The Three-Level Split
+Full design: [`docs/superpowers/specs/2026-07-24-agent-messaging-design.md`](docs/superpowers/specs/2026-07-24-agent-messaging-design.md).
 
-Agent behavior is configured at three levels. Getting this split right matters — putting the wrong thing at the wrong level leads to either rigid agents that can't adapt or unstable agents that lose their identity.
+### Schedules
 
-**Level 1: Global** (`/claub/config/CLAUDE.md`) — Rules that apply to **all** agents: safety, Discord behavior, workspace usage, memory protocol. Copied into `~/.claude/CLAUDE.md` at container startup.
-
-**Level 2: Agent identity** (`/claub/config/agents/{name}.md`) — The agent's **stable core**: personality, communication style, role definition, capabilities, and memory structure. This is **who the agent is** — it should rarely change. Think of it as the agent's DNA. Does NOT include:
-- Specific targets, criteria, or parameters that the user might adjust (those go in workspace CLAUDE.md)
-- Scheduled task instructions (those go in the cron `prompt` in agents.yaml)
-- Runtime state or progress tracking (that goes in memory)
-
-**Level 3: Living config** (`/claub/workspaces/{name}/CLAUDE.md`) — The **fluid details** the agent works with day-to-day: current targets, search criteria, focus areas, topic lists, thresholds. The agent can self-modify this file when the user asks to shift focus (e.g., "stop covering crypto", "raise my comp target to $180k"). The agent `.md` should reference this file and tell the agent it exists.
-
-**Rule of thumb:** If you'd change it by editing the agent's personality, it's Level 2. If you'd change it by telling the agent "from now on, focus on X instead of Y", it's Level 3.
-
-Each agent also gets a workspace directory at `/claub/workspaces/{name}/`. These are **runtime scratch directories** created automatically. Agents can write files or store data there as they see fit.
-
-### Adding a New Agent
-
-1. Add entry to `/claub/config/agents.yaml` with `channel_id` and optional `schedule` (cron prompts should contain the task instructions, not the agent `.md`)
-2. Create `/claub/config/agents/{name}.md` — stable identity only (personality, style, capabilities, memory structure). Must include YAML frontmatter with `name` and `description`. Reference the workspace CLAUDE.md so the agent knows to read it.
-3. Create `/claub/workspaces/{name}/CLAUDE.md` — fluid details the agent works with (targets, criteria, focus areas). The agent can self-modify this file.
-4. Optionally create `/claub/config/agents/{name}.mcp.json` for agent-specific MCP servers
-5. Restart the container: `docker compose restart`
+Managed dynamically at runtime via the embedded MCP server (`mcp__schedules__*`), persisted to `/claub/data/schedules.json`, synced to APScheduler immediately on mutation. Creation is globally rate-limited (5 firings/24h, 30/7d across all agents). See the `claub-schedules` skill.
 
 ### MCP Servers
 
-MCP servers give agents access to external tools (APIs, browsers, etc.) without granting arbitrary code execution. Two levels:
+MCP servers give agents access to external tools without granting arbitrary code execution. Configs are merged from two levels, both passed via `--mcp-config`:
 
-**Shared** (`/claub/config/mcp.json`) — passed to all agents:
+- **Shared** — `/claub/config/mcp.json`, passed to all agents.
+- **Per-agent** — `/claub/config/agents/{name}.mcp.json`.
 
-```json
-{
-  "mcpServers": {
-    "playwright": {
-      "type": "http",
-      "url": "http://host.docker.internal:3846/mcp"
-    }
-  }
-}
-```
+Servers baked into the image live at `/app/mcps/`; instance servers at `/claub/mcps/` (auto-`uv sync`'d by the entrypoint). See the `claub-mcp-servers` and `build-mcp-server` skills.
 
-**Per-agent** (`/claub/config/agents/{name}.mcp.json`) — additional MCPs for a specific agent only. Both files are passed via `--mcp-config` when the agent runs.
-
-#### Playwright MCP (Host-Side, per-agent)
-
-Each agent gets its **own** persistent Playwright browser profile (cookies, localStorage, logins) that survives bot and host restarts, so agents can log into sites once and stay logged in. The architecture has three moving parts:
-
-1. **Per-agent `--user-data-dir`.** Each agent's Playwright MCP process points at `~/docker/claub/playwright-profiles/{agent}/`. Playwright MCP can't multiplex profiles in a single server (issue [#1294](https://github.com/microsoft/playwright-mcp/issues/1294)), so we run one `@playwright/mcp` process per agent on its own port (main=3846, journalist=3847, etc.).
-
-2. **Playwright bridge daemon** (`scripts/playwright-bridge/bridge.py`). A stdlib-only Python HTTP service on the host that spawns / kills the per-agent MCP children on demand. Exposes `POST /start/<agent>`, `POST /stop/<agent>`, `GET /status`. Managed by launchd (`com.asempruch.playwright-bridge.plist`). Unknown agents get a 204 no-op so a global start hook is safe for browser-less agents. See `scripts/playwright-bridge/README.md`.
-
-3. **Generic on_start / on_stop hooks in `agents.yaml`.** The bot itself knows nothing about Playwright — it just runs shell hooks around each `claude` subprocess (see the "Lifecycle Hooks" section below). The Playwright wiring is entirely in user config:
-
-   ```yaml
-   on_start:
-     - "curl -fsS --max-time 20 -X POST http://host.docker.internal:9500/start/$CLAUB_AGENT_NAME || true"
-   on_stop:
-     - "curl -fsS --max-time 10 -X POST http://host.docker.internal:9500/stop/$CLAUB_AGENT_NAME || true"
-   ```
-
-Per-agent `.mcp.json` files point at that agent's port (e.g. `http://host.docker.internal:3847/mcp`). The shared `/claub/config/mcp.json` does **not** include `playwright`.
-
-**Why pre-spawn, and not Claude Code's own `SessionStart` hook?** Empirically, Claude Code fires its MCP connection handshake **in parallel with** (not after) `SessionStart` — the handshake can land 0.3 s before the hook even starts, and there's no initial-connection retry. So the Playwright MCP must already be listening by the time `claude` is exec'd. That means lifecycle has to run from the bot, not Claude. The on_start hook runs inside `AgentProcess.start()` and blocks on the `curl` to the bridge, which blocks until Playwright's port is listening.
-
-**Snapshot file sharing:** Agents save Playwright snapshots to `/tmp/playwright/` to keep large accessibility trees out of context. Since Playwright runs on the host, the file is written to the host's `/tmp/playwright/`, which is bind-mounted read-only into the container at the same path. This requires the Docker runtime (e.g., Colima) to mount `/tmp/playwright` into the VM — this is **not** done by default. For Colima, add it to the `mounts` list in `~/.colima/default/colima.yaml`. Docker Desktop for Mac should work out of the box since it shares `/tmp` by default.
-
-**File uploads (host-path double mount):** Playwright's `browser_file_upload` tool `fs.stat`s paths on the **host**, so passing a container-only path like `/claub/workspaces/career/resume.pdf` fails with ENOENT. Additionally, Playwright MCP enforces an allowed-roots check using the MCP `roots` capability — Claude Code sends its container cwd as a root, so host-native paths get rejected before `fs.stat` even runs. Two things are needed:
-
-1. **`--allow-unrestricted-file-access`** on each Playwright MCP instance (already in `scripts/playwright-bridge/config.example.json`'s `command_template`) — disables the roots-based path restriction so host paths aren't rejected.
-2. **Double mount** in `docker-compose.yml` — the host data directory is bind-mounted at both `/claub` and its native host path via `${CLAUB_DATA_PATH}:${CLAUB_DATA_PATH}`. The container exports `CLAUB_HOST_PATH=${CLAUB_DATA_PATH}` so agents can construct host-valid paths.
-
-Agents use `/claub/...` for everything normally, but swap in `$CLAUB_HOST_PATH/...` when handing a path to Playwright's file-chooser tools — e.g. `/claub/workspaces/career/resume.pdf` becomes `$CLAUB_HOST_PATH/workspaces/career/resume.pdf`, which resolves to e.g. `/Users/you/docker/claub/workspaces/career/resume.pdf` on both sides. Agent-facing documentation lives in `/claub/config/CLAUDE.md`.
-
-**Page zoom is set per-profile, not via init.js.** We want the browser to render at ~80% so more fits in the viewport. The earlier approach of `documentElement.style.zoom = '80%'` in init.js broke hCaptcha rendering — cross-origin iframes (the captcha challenge frame) don't inherit CSS `zoom`, so the captcha laid out smaller than its parent-side iframe element and clicks misaligned. Instead, each agent's `Default/Preferences` carries `profile.default_zoom_level` (and `partition.default_zoom_level.x`) — Chromium's native zoom (the Cmd+− equivalent), which works in the compositor and propagates to iframes correctly. After adding a new agent (and creating its bridge profile entry), run `scripts/playwright-bridge/apply-zoom-prefs.py` once to seed the zoom pref. The script is idempotent; do not run it while Chromium has the profile open.
+Playwright is the exception — it runs **host-side**, one process per agent, managed by a bridge daemon via lifecycle hooks. See the `claub-playwright` skill.
 
 ### Lifecycle Hooks
 
-`AgentProcess` runs shell commands around the `claude` subprocess. `on_start` hooks run **before** `claude` is exec'd (so any MCP server they spawn is ready when Claude handshakes); `on_stop` hooks run **after** it exits. Hooks are sequential, each subject to a 15 s default timeout; failure or timeout logs a warning but does not abort agent lifecycle.
+`AgentProcess` runs shell commands around the `claude` subprocess. `on_start` hooks run **before** `claude` is exec'd (so any MCP server they spawn is ready when Claude handshakes); `on_stop` hooks run **after** it exits. Hooks are sequential with a 15 s default timeout; failure or timeout logs a warning but does not abort agent lifecycle.
 
-Configured in `agents.yaml`. Both top-level and per-agent fields accepted; **per-agent hooks are additive on top of global** (same precedent as `allowed_skills`). Each hook is a shell string, so `$CLAUB_AGENT_NAME` interpolates naturally:
+Configured in `agents.yaml`. Both top-level and per-agent fields are accepted; **per-agent hooks are additive on top of global** (same precedent as `allowed_skills`). Each hook is a shell string, so `$CLAUB_AGENT_NAME` interpolates naturally:
 
 ```yaml
 on_start:
@@ -266,66 +156,6 @@ agents:
 
 Trailing `|| true` is a common pattern: if the hook target is temporarily down, the agent still starts rather than erroring.
 
-#### Nextcloud File Sharing MCP
-
-A subprocess MCP server (like git) at `/app/mcps/nextcloud/` in the container that lets agents upload files to Nextcloud and get share links. Each agent spawns its own instance via stdio.
-
-**Setup:** Create a dedicated Nextcloud user, generate an app password (Settings > Security), set `NEXTCLOUD_URL`, `NEXTCLOUD_LOGIN`, and `NEXTCLOUD_TOKEN` in `.env`. Optional: `NEXTCLOUD_EPHEMERAL_TTL_DAYS` (default 3).
-
-**Tools:** `mcp__nextcloud__share_file`, `mcp__nextcloud__list_shares`, `mcp__nextcloud__delete_shared_file`, `mcp__nextcloud__cleanup_ephemeral`.
-
-**File organization:** Files are stored under `claub/ephemeral/{agent}/` (auto-cleaned after TTL) or `claub/persistent/{agent}/` (permanent). Share links open Nextcloud's built-in viewer (PDF viewer for PDFs).
-
-**Cleanup:** Runs automatically on process startup. Can also be triggered manually via `cleanup_ephemeral` tool.
-
-#### Home Assistant MCP
-
-A subprocess MCP server at `/app/mcps/hass/` exposing a small, hand-picked slice of Home Assistant. Not a general HASS bridge — each tool is a typed wrapper around one entity or service, by design. Adding a new capability means writing a new `@mcp.tool()` function so the agent gets a dedicated, well-described tool rather than a generic "call_service" with stringly-typed args.
-
-**Setup:** Set `HASS_URL` and `HASS_TOKEN` (long-lived access token from HA Profile > Security) in `.env`.
-
-**Tools:** `mcp__hass__get_user_location`, `mcp__hass__get_user_location_history`, `mcp__hass__broadcast`.
-
-**Extending:** Edit `mcps/hass/server.py` and add a new `@mcp.tool()` function. Use `_get_state(entity_id)`, `_get_history(entity_id, hours)`, or `_call_service(domain, service, payload)` as helpers — they handle the auth and HTTP. Shape the response so the agent gets only the fields it needs, not raw HASS state JSON. Then add the new tool to `settings.json`'s allow list (it's already covered by `mcp__hass__*`).
-
-#### Google MCP (Gmail + Calendar, read-only, multi-account)
-
-An *instance* MCP server at `/claub/mcps/google/server.py` (i.e. lives under the user's bind-mounted `mcps/`, not the baked image) that exposes Gmail search/fetch and Calendar list/fetch tools against one Google account at a time. Multiple accounts are supported by running multiple MCP instances, one per account, each with its own token file.
-
-**Account layout:** Each Google account gets a directory under `~/docker/claub/mcps/google/accounts/{label}/`, holding a single `token.json` (mode 0600). The label is a short tag (e.g. `lk`, `rhs`, `alan3ir0`) — by convention it identifies the *account being read*, not the GCP project that owns the OAuth client (the two can differ; a refresh token from project A can authorize calls against account B). Token files are gitignored via `**/token.json` in the instance repo's `.gitignore`.
-
-**Per-agent wiring:** Each agent that wants access to an account adds an MCP server entry to its `config/agents/{agent}.mcp.json`, conventionally named `google_{label}`:
-
-```json
-"google_rhs": {
-  "command": "uv",
-  "args": ["--directory", "/claub/mcps/google", "run", "server.py"],
-  "env": {
-    "GOOGLE_MCP_TOKEN": "/claub/mcps/google/accounts/rhs/token.json"
-  }
-}
-```
-
-The server reads `GOOGLE_MCP_TOKEN` to find its token file. Each agent process spawns its own subprocess(es), one per `google_*` server entry — so per-account isolation is automatic and an agent can have multiple accounts wired in simultaneously (each shows up under its own `mcp__google_{label}__*` prefix).
-
-**Allow-list:** Each `google_{label}` MCP also needs `mcp__google_{label}__*` in `settings.json`'s `permissions.allow` (matching the existing `mcp__google_lk__*` / `mcp__google_rhs__*` pattern). The settings allow-list is the hard ceiling for what tools an agent can call.
-
-**Scope-based tool filtering:** At MCP startup the server reads `token.json`'s `scopes` list and only registers the tool group(s) that match: `gmail_*` requires `gmail.readonly`, `calendar_*` requires `calendar.readonly`. A token with only one scope exposes only the matching half of the tool catalog — agents simply don't see tools they can't use. The startup also writes a one-line summary to stderr (visible in `docker compose logs`):
-
-```
-google MCP: token=token.json, scopes=[...], registered=['gmail', 'calendar']
-```
-
-**Token replacement is hot for refresh-only swaps, cold for scope changes.** The MCP re-reads `token.json` on every `_creds()` call (so re-minting with the same scopes takes effect on the agent's next tool call, no restart). But the *scope filter* runs once at MCP startup, so adding or removing scopes requires `docker compose restart` for the agent's tool catalog to update.
-
-**Failure mode — `invalid_grant` / persistent 401:** the refresh token has been revoked (user pulled access at <https://myaccount.google.com/permissions>, or the OAuth client/project was modified upstream). Notify the user — re-minting requires a consent flow on the source machine.
-
-#### Custom MCP Servers
-
-Custom MCP servers live in `/claub/mcps/` (bind-mounted from host). The entrypoint automatically runs `uv sync` for any subdirectory containing a `pyproject.toml` on every container start, so Python-based MCPs are always ready.
-
-See the `mcps/` directory for examples of the MCP server pattern. Baked-in servers live at `/app/mcps/` in the container; instance servers at `/claub/mcps/` can extend or add to them.
-
 ### Permissions (/claub/config/settings.json)
 
 Tool allow-list for all agents:
@@ -339,7 +169,7 @@ Tool allow-list for all agents:
 }
 ```
 
-The container provides isolation — no macOS Seatbelt sandbox needed. Agents run with `--permission-mode acceptEdits` and are constrained by the container's filesystem boundaries.
+This list is the **hard ceiling** — a tool missing from it is silently unavailable, and self-authored skills/subagents can only narrow it, never expand it. The container provides isolation, so no macOS Seatbelt sandbox is needed; agents run with `--permission-mode acceptEdits` and are constrained by the container's filesystem boundaries.
 
 ## Message Flow
 
@@ -351,15 +181,7 @@ The container provides isolation — no macOS Seatbelt sandbox needed. Agents ru
 6. On process error: restart and retry once. On auth error: notify user.
 7. Response chunked at newline boundaries (max 2000 chars) and sent back
 
-### Commands
-
-- `/clear` — stops agent process for current channel, clears session (next message starts fresh)
-- `/clear {agent}` — same, but targets a specific agent by name
-- `/stop` — stops the current channel's agent process (keeps the session, unlike `/clear`)
-- `/compact` — compacts the current channel's agent session (summarizes history to free context, keeping the same session). Posts a start notice, then a completion notice. Sends the literal `/compact` slash command into the stream-json process
-- `/model` — show the current model for this channel's agent (override or config default)
-- `/model {name}` — switch the agent to a model (e.g. `sonnet`, `opus`, or a full model ID); persists across `/clear`, until `/model reset`
-- `/model reset` — revert to the `agents.yaml` / CLI default model
+Channel commands (`/clear`, `/stop`, `/compact`, `/model`) are documented in [`README.md`](README.md#channel-commands).
 
 ## Session Persistence
 
@@ -376,23 +198,18 @@ docker compose restart        # Restart (picks up config changes)
 docker compose stop           # Stop the container
 docker compose logs --tail 50 # Last 50 lines of logs
 docker compose logs -f        # Tail logs live
-```
-
-To access a shell inside the container:
-
-```bash
-docker exec -it claude-claub-1 bash
+docker exec -it claude-claub-1 bash   # Shell inside the container
 ```
 
 ## Deploying Changes
 
-**Bot code changes** (anything in `bot/`): rebuild the image and restart:
+**Bot code changes** (anything in `bot/`) — rebuild the image:
 
 ```bash
 docker compose up -d --build
 ```
 
-**Config changes** (agent prompts, settings.json, CLAUDE.md, mcp.json): just restart — the entrypoint re-copies config at startup:
+**Config changes** (agent prompts, settings.json, CLAUDE.md, mcp.json) — just restart; the entrypoint re-copies config at startup:
 
 ```bash
 docker compose restart
@@ -400,18 +217,14 @@ docker compose restart
 
 ## Authentication
 
-Credentials persist in the `claude-home` named Docker volume. Authenticate once after first deploy:
+Credentials persist in the `claude-home` named Docker volume. Authenticate once after first deploy (repeat if auth expires):
 
 ```bash
 docker exec -it claude-claub-1 claude
 # Follow login flow, then exit
 ```
 
-If auth expires, repeat the same command.
-
 ## Development
-
-### Running Tests
 
 ```bash
 cd bot
@@ -419,26 +232,12 @@ uv run --extra dev pytest tests/ -v --ignore=tests/test_integration.py
 ```
 
 Integration tests (require real Claude CLI auth):
+
 ```bash
 CLAUDE_INTEGRATION_TEST=1 uv run --extra dev pytest tests/test_integration.py -v
 ```
 
-### Testing Claude CLI Directly
-
-Use the debug CLI (`claude_assistant.debug_agent`) to talk to an agent with its full production config (agent definition, per-agent MCP configs, allowed/disallowed tools, model, effort) without touching `sessions.json`. Debug mode drops `--resume` and adds `--no-session-persistence`, so every run is a fresh session.
-
-```bash
-# Replace {name} with an agent name from agents.yaml (e.g. main, career, journalist)
-docker exec claude-claub-1 uv run --project /app/bot python -m claude_assistant.debug_agent {name} -p "your prompt here"
-```
-
-The CLI also supports interactive stdin mode (omit `-p`) for manual back-and-forth sessions.
-
-Raw `claude` fallback (skips the bot's config — useful for isolating whether an issue is in the CLI itself vs. the bot wiring):
-
-```bash
-docker exec claude-claub-1 claude -p "say hello" --no-session-persistence
-```
+To drive a configured agent by hand for debugging, use the debug CLI — see the `claub-logs` skill.
 
 ### Key Design Decisions
 
@@ -446,33 +245,13 @@ docker exec claude-claub-1 claude -p "say hello" --no-session-persistence
 - **Lazy startup**: Agent processes start on first message or scheduled trigger, not eagerly at boot. Supervisor restarts dead processes.
 - **Stream lock inside AgentProcess**: Internal asyncio lock serializes send/receive on the stream-json pipe. No bot-level locks needed.
 - **Lifecycle lock**: Separate lock in AgentProcess protects start/stop/restart transitions from racing with the supervisor.
-- **Idle reaper**: Background task kills agent processes after 10 minutes of inactivity. Prevents stale processes from holding expiring OAuth tokens, which caused auth races when multiple long-lived processes shared the same credentials file. A `_reaped` set prevents the supervisor from immediately restarting intentionally killed processes.
-- **Docker-first**: The container runs Claude CLI with its native `~/.claude/` path. Settings/CLAUDE.md are copied from `/claub/config/` into `~/.claude/` at startup by the entrypoint. No HOME override hack.
-- **acceptEdits permission mode**: All processes run with `--permission-mode acceptEdits`
-- **Inline agent definitions**: Agent `.md` files are parsed by the bot and passed to each CLI process via `--agents` JSON flag. Each process only sees its own agent — no `disallowedTools` hack needed to prevent cross-agent invocation. Built-in agents (Explore, Plan, etc.) remain available.
-- **Entrypoint config copy**: `entrypoint.sh` copies settings.json and CLAUDE.md from `/claub/config/` into `~/.claude/` on every container start. No symlinks — plain copies.
-- **Separated instance from source**: Bot code is baked into the image; user config and runtime state are bind-mounted from the host into `/claub/` (configurable via `CLAUB_HOME` env var).
-- **Embedded MCP server for schedules**: FastMCP HTTP server runs inside the bot process on localhost. Agents manage their own cron schedules via MCP tools. Changes take effect immediately — no file polling or restart needed. One-shot schedules are deleted from persistence before execution to prevent duplicate firing on crash recovery.
-- **Agent-authored skills and subagents via symlink**: Each workspace gets real `.claude-skills/` and `.claude-agents/` dirs, with `.claude/skills/` and `.claude/agents/` symlinking to them. Agents write to the real `.claude-{name}/` dirs (not blocked by Claude Code — Claude Code resolves symlinks, so writing through a symlink *to* `.claude/` is blocked). Claude Code discovers skills and subagents by reading `.claude/{name}/` which symlinks to the real dirs. This lets agents author their own skills and subagents without granting write access to `.claude/` (which would let them modify `settings.json` and escalate permissions). The settings.json `permissions.allow` list remains the hard ceiling — frontmatter `allowed-tools` on self-authored skills/subagents can only narrow permissions, never expand them. The symlinks are created by `_ensure_authoring_symlink()` in `discord_bot.py` during `_start_agent`, which also migrates any existing real `.claude/{name}/` contents.
-
-### Agent Memory System
-
-Agents are long-running assistants (not dev tools) that may operate for months. Memory is file-based, stored in each agent's workspace at `/claub/workspaces/{name}/memory/`. The system is designed to stay useful over time without unbounded growth.
-
-Memory guidelines live within the broader agent configuration system (see "Agent Context" above). `/claub/config/CLAUDE.md` defines global rules that apply to all agents — safety, Discord behavior, workspace usage, and the memory protocol. `/claub/config/agents/{name}.md` defines each agent's role, personality, task instructions, and agent-specific memory structure. When editing memory guidelines, preserve this split: global rules enforce mechanical discipline; agent-specific rules define *what* to remember and *how long* to keep it.
-
-**Design principles to enforce:**
-- **Mandatory startup read**: Every agent reads `memory/index.md` before doing any work, every session. No conditional checks.
-- **Write-time pruning**: Every memory write must include a review of the index. Remove outdated entries, merge overlapping ones. This is the primary defense against memory bloat.
-- **Compaction awareness**: Claude's context compaction can silently drop conversation history. Anything important must be written to memory files promptly — not deferred to end-of-session.
-- **Current state wins**: When memory conflicts with observed reality, trust what's there now and update the memory. Stale entries that persist cause compounding errors.
-- **Bounded growth**: Index should stay under ~50 entries. Agent-specific rules should define retention periods (e.g., journalist keeps 7 days of briefs). Memory without a pruning policy will degrade agent performance over time.
-
-### Dependencies
-
-Core: `discord.py`, `apscheduler`, `pyyaml`, `python-dotenv`, `fastmcp`, `uvicorn`
-Dev: `pytest`, `pytest-asyncio`
-Build: `hatchling`
+- **Idle reaper**: Kills agent processes after 10 minutes of inactivity. Prevents stale processes from holding expiring OAuth tokens, which caused auth races when multiple long-lived processes shared the same credentials file. A `_reaped` set prevents the supervisor from immediately restarting intentionally killed processes.
+- **Docker-first**: The container runs Claude CLI with its native `~/.claude/` path. No HOME override hack.
+- **Entrypoint config copy**: `entrypoint.sh` copies settings.json and CLAUDE.md from `/claub/config/` into `~/.claude/` on every container start. Plain copies, no symlinks.
+- **Separated instance from source**: Bot code is baked into the image; user config and runtime state are bind-mounted into `/claub/` (via `CLAUB_HOME`).
+- **Inline agent definitions**: Agent `.md` files are parsed by the bot and passed via the `--agents` JSON flag. Each process only sees its own agent — no `disallowedTools` hack needed to prevent cross-agent invocation. Built-in agents (Explore, Plan, etc.) remain available.
+- **Embedded MCP server**: FastMCP runs inside the bot process on localhost. Changes take effect immediately — no file polling or restart. One-shot schedules are deleted from persistence *before* execution to prevent duplicate firing on crash recovery.
+- **Agent-authored skills via symlink**: Workspaces get real `.claude-skills/` and `.claude-agents/` dirs, with `.claude/skills/` and `.claude/agents/` symlinked to them. Claude Code blocks writes that resolve into `.claude/`, but reads through the symlinks fine — so agents can author their own skills and subagents without gaining write access to `.claude/settings.json` (which would let them escalate permissions). Created by `_ensure_authoring_symlink()` in `discord_bot.py` during `_start_agent`, which also migrates pre-existing real `.claude/{name}/` contents.
 
 ## Branching
 

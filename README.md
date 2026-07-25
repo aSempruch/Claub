@@ -44,6 +44,7 @@ AssistantBot (discord.py)
 | [`mcps/leetcode-stats/`](mcps/leetcode-stats/) | LeetCode GraphQL API client — stats, cloud code, submissions (4 tools, with tests) |
 | [`mcps/nextcloud/`](mcps/nextcloud/) | Nextcloud file sharing via WebDAV with TTL-based ephemeral cleanup (4 tools) |
 | [`mcps/hass/`](mcps/hass/) | Home Assistant — a deliberately narrow allowlist of typed wrappers around specific entities and services (3 tools) |
+| [`mcps/file-download/`](mcps/file-download/) | Least-privilege URL → workspace fetch: SSRF-blocked, size-capped, path-validated (1 tool) |
 
 ## Example Agents
 
@@ -76,6 +77,20 @@ docker exec -it claude-claub-1 claude
 ```
 
 See [`CLAUDE.md`](CLAUDE.md) for full documentation on configuration, deployment, and architecture.
+
+## Channel Commands
+
+Type these in an agent's Discord channel:
+
+| Command | Effect |
+|---|---|
+| `/clear` | Stops the channel's agent process and clears its session — the next message starts fresh |
+| `/clear {agent}` | Same, but targets a specific agent by name |
+| `/stop` | Stops the channel's agent process but **keeps** the session |
+| `/compact` | Compacts the session (summarizes history to free context, same session). Posts a start notice, then a completion notice |
+| `/model` | Show the current model for this channel's agent |
+| `/model {name}` | Switch models (`sonnet`, `opus`, or a full model ID). Persists across `/clear` until reset |
+| `/model reset` | Revert to the `agents.yaml` / CLI default model |
 
 ## Tests
 

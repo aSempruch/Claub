@@ -7,7 +7,19 @@ __pycache__/
 .superpowers/
 test_scripts/
 .playwright-mcp/
-.claude/
+# This repo is public. .claude/ is ignored by default and project-documentation
+# skills are allowlisted one by one — local settings and personal deployment
+# notes stay untracked, and new skills stay private until explicitly added here.
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/add-claub-agent/
+!.claude/skills/build-mcp-server/
+!.claude/skills/claub-logs/
+!.claude/skills/claub-mcp-servers/
+!.claude/skills/claub-playwright/
+!.claude/skills/claub-schedules/
+
 CLAUDE.local.md
 .mcp.json
 
