@@ -494,3 +494,37 @@ async def test_webhook_username_truncated_to_discord_limit(tmp_path: Path) -> No
     username = await _webhook_username(bot)
     assert len(username) == 80
     assert username.startswith("Journalist [m")
+
+
+@pytest.mark.asyncio
+async def test_deliver_agent_message_sends_and_persists(tmp_path):
+    from unittest.mock import AsyncMock
+    from claude_assistant.config import AgentConfig, AssistantConfig
+    from claude_assistant.discord_bot import AssistantBot
+    from claude_assistant.schedule_store import ScheduleStore
+    from claude_assistant.session import SessionStore
+    from types import SimpleNamespace
+
+    config = AssistantConfig(
+        agents={
+            "main": AgentConfig(channel_id="1"),
+            "journalist": AgentConfig(channel_id="2"),
+        },
+        agent_groups={"g": ["main", "journalist"]},
+    )
+    bot = AssistantBot(
+        config,
+        workspaces_dir=tmp_path / "ws",
+        session_store=SessionStore(tmp_path / "sessions.json"),
+        schedule_store=ScheduleStore(tmp_path / "schedules.json"),
+    )
+    bot._send_with_restart = AsyncMock(return_value="the reply")
+    bot._processes["journalist"] = SimpleNamespace(session_id="sess-123")
+
+    result = await bot._deliver_agent_message("journalist", "[message from agent main] hi")
+
+    assert result == "the reply"
+    bot._send_with_restart.assert_awaited_once_with(
+        "journalist", "[message from agent main] hi"
+    )
+    assert bot.sessions.get("journalist") == "sess-123"

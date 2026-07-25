@@ -1,6 +1,11 @@
 import pytest
 from pathlib import Path
-from claude_assistant.config import load_config, discover_skills, AssistantConfig
+from claude_assistant.config import (
+    load_config,
+    discover_skills,
+    reachable_agents,
+    AssistantConfig,
+)
 
 
 def test_load_minimal_config(tmp_path: Path) -> None:
@@ -246,3 +251,94 @@ def test_allowed_skills_config(tmp_path: Path) -> None:
     )
     config = load_config(cfg_file)
     assert config.agents["main"].allowed_skills == ["amazon-browse"]
+
+
+# --- agent_groups ---
+
+
+def _write_config(tmp_path, body: str):
+    p = tmp_path / "agents.yaml"
+    p.write_text(body)
+    return p
+
+
+BASE_AGENTS = """
+agents:
+  main:
+    channel_id: "1"
+  journalist:
+    channel_id: "2"
+  career:
+    channel_id: "3"
+"""
+
+
+def test_agent_groups_default_empty(tmp_path):
+    config = load_config(_write_config(tmp_path, BASE_AGENTS))
+    assert config.agent_groups == {}
+
+
+def test_agent_groups_parsed(tmp_path):
+    config = load_config(_write_config(tmp_path, BASE_AGENTS + """
+agent_groups:
+  household: [main, journalist, career]
+  news: [main, journalist]
+"""))
+    assert config.agent_groups == {
+        "household": ["main", "journalist", "career"],
+        "news": ["main", "journalist"],
+    }
+
+
+def test_agent_groups_unknown_member_rejected(tmp_path):
+    with pytest.raises(ValueError, match="unknown"):
+        load_config(_write_config(tmp_path, BASE_AGENTS + """
+agent_groups:
+  bad: [main, ghost]
+"""))
+
+
+def test_agent_groups_single_member_rejected(tmp_path):
+    with pytest.raises(ValueError, match="at least 2"):
+        load_config(_write_config(tmp_path, BASE_AGENTS + """
+agent_groups:
+  solo: [main]
+"""))
+
+
+def test_agent_groups_duplicate_member_rejected(tmp_path):
+    with pytest.raises(ValueError, match="duplicate"):
+        load_config(_write_config(tmp_path, BASE_AGENTS + """
+agent_groups:
+  dupes: [main, main]
+"""))
+
+
+def test_reachable_agents_union_minus_self():
+    groups = {"a": ["main", "journalist"], "b": ["main", "career"]}
+    assert reachable_agents(groups, "main") == {"journalist", "career"}
+    assert reachable_agents(groups, "journalist") == {"main"}
+    assert reachable_agents(groups, "shopping") == set()
+
+
+def test_agent_name_with_invalid_chars_rejected(tmp_path):
+    """Names become MCP tool names (message_agent_{name}) — keep them safe."""
+    with pytest.raises(ValueError, match="agents.my agent"):
+        load_config(_write_config(tmp_path, """
+agents:
+  main:
+    channel_id: "1"
+  my agent:
+    channel_id: "2"
+"""))
+
+
+def test_agent_name_allows_dashes_and_underscores(tmp_path):
+    config = load_config(_write_config(tmp_path, """
+agents:
+  main:
+    channel_id: "1"
+  shopping-assistant_2:
+    channel_id: "2"
+"""))
+    assert "shopping-assistant_2" in config.agents

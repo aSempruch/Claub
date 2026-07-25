@@ -7,6 +7,10 @@
         "X-Agent-Name": "${CLAUB_AGENT_NAME}"
       }
     },
+    "agents": {
+      "type": "http",
+      "url": "http://127.0.0.1:${CLAUB_MSG_PORT:-9400}/agents/${CLAUB_AGENT_NAME}/mcp"
+    },
     "nextcloud": {
       "command": "uv",
       "args": ["--directory", "/app/mcps/nextcloud", "run", "server.py"]

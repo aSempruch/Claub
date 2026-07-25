@@ -48,6 +48,7 @@ class AssistantConfig:
     on_start: list[str] = field(default_factory=list)
     on_stop: list[str] = field(default_factory=list)
     can_stop: list[str] = field(default_factory=list)
+    agent_groups: dict[str, list[str]] = field(default_factory=dict)
 
 
 def load_config(path: Path) -> AssistantConfig:
@@ -63,6 +64,13 @@ def load_config(path: Path) -> AssistantConfig:
 
     agents: dict[str, AgentConfig] = {}
     for name, agent_raw in (raw.get("agents") or {}).items():
+        # Agent names become MCP tool names (message_agent_{name}), env vars,
+        # and URL path segments — keep them to a conservative character set.
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", str(name)):
+            raise ValueError(
+                f"agents.{name}: agent name must contain only letters, digits, "
+                f"'-' and '_'"
+            )
         channel_id = (agent_raw or {}).get("channel_id")
         if not channel_id:
             raise ValueError(f"agents.{name}.channel_id is required")
@@ -98,6 +106,17 @@ def load_config(path: Path) -> AssistantConfig:
     on_stop = raw.get("on_stop") or []
     can_stop = raw.get("can_stop") or []
 
+    agent_groups: dict[str, list[str]] = {}
+    for gname, members in (raw.get("agent_groups") or {}).items():
+        if not isinstance(members, list) or len(members) < 2:
+            raise ValueError(f"agent_groups.{gname}: must list at least 2 agents")
+        if len(set(members)) != len(members):
+            raise ValueError(f"agent_groups.{gname}: contains duplicate members")
+        unknown = [m for m in members if m not in agents]
+        if unknown:
+            raise ValueError(f"agent_groups.{gname}: unknown agents {unknown}")
+        agent_groups[gname] = list(members)
+
     return AssistantConfig(
         agents=agents,
         allowed_user_ids=allowed_user_ids,
@@ -108,7 +127,18 @@ def load_config(path: Path) -> AssistantConfig:
         on_start=on_start,
         on_stop=on_stop,
         can_stop=can_stop,
+        agent_groups=agent_groups,
     )
+
+
+def reachable_agents(agent_groups: dict[str, list[str]], name: str) -> set[str]:
+    """Agents that *name* may message: union of co-members across its groups."""
+    out: set[str] = set()
+    for members in agent_groups.values():
+        if name in members:
+            out.update(members)
+    out.discard(name)
+    return out
 
 
 def parse_agent_file(path: Path) -> dict[str, str]:

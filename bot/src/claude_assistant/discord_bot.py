@@ -10,7 +10,9 @@ import time
 from pathlib import Path
 
 import discord
+import uvicorn
 
+from claude_assistant.agent_messaging import combine_mcp_apps, create_messaging_servers
 from claude_assistant.attachments import download_attachments
 from claude_assistant.chunker import chunk_message
 from claude_assistant.claude_process import AgentProcess, AuthenticationError
@@ -320,17 +322,50 @@ class AssistantBot:
             log.info("Idle reaper cancelled")
             return
 
+    async def _deliver_agent_message(self, agent_name: str, content: str) -> str:
+        """Deliver an agent-to-agent message via the standard send path."""
+        result = await self._send_with_restart(agent_name, content)
+        process = self._processes.get(agent_name)
+        if process and process.session_id:
+            self.sessions.set(agent_name, process.session_id)
+        return result
+
+    def _agent_descriptions(self) -> dict[str, str]:
+        out: dict[str, str] = {}
+        for name in self.config.agents:
+            definition = self._load_agent_definition(name)
+            if definition:
+                out[name] = definition.get("description", "")
+        return out
+
     async def _start_mcp_server(self) -> None:
-        mcp = create_mcp_server(
+        schedules_mcp = create_mcp_server(
             self.schedule_store,
             self._scheduler,
             notify=self._notify_channel,
             history=self.firing_history,
         )
-        log.info("Starting MCP server on 127.0.0.1:%d", self.mcp_port)
-        await mcp.run_http_async(
-            host="127.0.0.1", port=self.mcp_port, log_level="warning", show_banner=False,
+        messaging_mcps = create_messaging_servers(
+            self.config.agents,
+            self.config.agent_groups,
+            deliver=self._deliver_agent_message,
+            get_live_process=self._processes.get,
+            descriptions=self._agent_descriptions(),
         )
+        app = combine_mcp_apps(
+            schedules_mcp.http_app(path="/mcp"),
+            {n: m.http_app(path="/mcp") for n, m in messaging_mcps.items()},
+        )
+        log.info(
+            "Starting MCP server on 127.0.0.1:%d (schedules + agent messaging)",
+            self.mcp_port,
+        )
+        server = uvicorn.Server(
+            uvicorn.Config(
+                app, host="127.0.0.1", port=self.mcp_port, log_level="warning"
+            )
+        )
+        await server.serve()
 
     # --- Message handling ---
 

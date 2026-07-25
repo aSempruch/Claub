@@ -17,9 +17,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import sys
 from pathlib import Path
 
+import uvicorn
+
+from claude_assistant.agent_messaging import combine_mcp_apps, create_messaging_servers
 from claude_assistant.claude_process import AgentProcess
 from claude_assistant.config import (
     AssistantConfig,
@@ -116,6 +120,51 @@ def _build_process(agent_name: str) -> AgentProcess:
     )
 
 
+async def start_debug_messaging(config, agents_dir, build_process, live):
+    """Run an isolated agent-messaging MCP server for a debug session.
+
+    Receivers are built via *build_process* (debug=True — fresh sessions, no
+    persistence), started lazily, and returned in a registry for cleanup.
+    Sets CLAUB_MSG_PORT so every subsequently spawned process (including
+    receivers-of-receivers) talks to this server instead of the live bot's.
+    """
+    registry: dict[str, AgentProcess] = {}
+
+    async def deliver(name: str, content: str) -> str:
+        process = registry.get(name)
+        if process is None or not process.is_alive:
+            process = build_process(name)
+            await process.start(None)
+            registry[name] = process
+            live[name] = process
+        return await process.send_message(content)
+
+    descriptions: dict[str, str] = {}
+    for name in config.agents:
+        definition = _load_agent_definition(name, agents_dir)
+        if definition:
+            descriptions[name] = definition.get("description", "")
+
+    mcps = create_messaging_servers(
+        config.agents, config.agent_groups, deliver, live.get, descriptions
+    )
+    app = combine_mcp_apps(
+        None, {n: m.http_app(path="/mcp") for n, m in mcps.items()}
+    )
+    server = uvicorn.Server(
+        uvicorn.Config(app, host="127.0.0.1", port=0, log_level="warning")
+    )
+    task = asyncio.create_task(server.serve())
+    while not server.started:
+        if task.done():
+            task.result()  # surface startup errors
+        await asyncio.sleep(0.05)
+    port = server.servers[0].sockets[0].getsockname()[1]
+    os.environ["CLAUB_MSG_PORT"] = str(port)
+    log.info("debug messaging server on 127.0.0.1:%d", port)
+    return server, task, registry
+
+
 async def _run_one_shot(process: AgentProcess, prompt: str) -> None:
     await process.start(None)
     try:
@@ -145,6 +194,38 @@ async def _run_interactive(process: AgentProcess) -> None:
         await process.stop()
 
 
+async def _run(agent_name: str, prompt: str | None) -> None:
+    (
+        config_path, _workspaces, _sessions, _mcp_config, agents_dir,
+        _schedules, _skills, _history,
+    ) = _resolve_paths()
+    config = load_config(config_path)
+
+    server = serve_task = None
+    registry: dict[str, AgentProcess] = {}
+    live: dict[str, AgentProcess] = {}
+    in_group = any(agent_name in m for m in config.agent_groups.values())
+    if in_group:
+        server, serve_task, registry = await start_debug_messaging(
+            config, agents_dir if agents_dir.exists() else None, _build_process, live
+        )
+
+    process = _build_process(agent_name)
+    live[agent_name] = process
+    try:
+        if prompt is not None:
+            await _run_one_shot(process, prompt)
+        else:
+            await _run_interactive(process)
+    finally:
+        for receiver in registry.values():
+            await receiver.stop()
+        if server is not None:
+            server.should_exit = True
+        if serve_task is not None:
+            await serve_task
+
+
 def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -164,14 +245,8 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    process = _build_process(args.agent)
-    runner = (
-        _run_one_shot(process, args.prompt)
-        if args.prompt is not None
-        else _run_interactive(process)
-    )
     try:
-        asyncio.run(runner)
+        asyncio.run(_run(args.agent, args.prompt))
     except KeyboardInterrupt:
         sys.exit(130)
 

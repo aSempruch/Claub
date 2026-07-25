@@ -92,6 +92,9 @@ class AgentProcess:
         self._lifecycle_lock = asyncio.Lock()
         self._ready = asyncio.Event()
         self._first_message = False
+        # Set by the messaging MCP handler while this agent has a blocking
+        # send_message call in flight — its stream is legitimately silent.
+        self.awaiting_agent_reply = False
         # Lognormal idle timeout mimicking real Claude Code session lengths:
         #   median ~40 min, sigma 0.75 gives wide spread
         #   ~68%: 19 min – 85 min    ~95%: 9 min – 3 hrs
@@ -176,6 +179,9 @@ class AgentProcess:
         env["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] = "1"
         if self.compact_pct is not None:
             env["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] = str(self.compact_pct)
+        # Agent-to-agent sends can block up to 15 min; keep the CLI's MCP
+        # tool timeout above the bot's own wait cap.
+        env.setdefault("MCP_TOOL_TIMEOUT", "1200000")
         return env
 
     async def _run_hooks(self, hooks: list[str], phase: str) -> None:
@@ -374,6 +380,8 @@ class AgentProcess:
                     timeout=inactivity_timeout,
                 )
             except asyncio.TimeoutError:
+                if self.awaiting_agent_reply:
+                    continue
                 raise RuntimeError(
                     f"Agent {self.agent_name} stream silent for {inactivity_timeout:.0f}s — "
                     "likely stuck on a tool call or MCP child"

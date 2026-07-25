@@ -43,8 +43,9 @@ AssistantBot (discord.py)  [runs in Docker container]
     │   └─ Fires any agent on cron schedules (including main)
     │   └─ Loads from /claub/data/schedules.json
     │
-    └─ MCP Server (FastMCP, localhost:9400)
+    └─ MCP Server (FastMCP, localhost:9400) — schedules at /mcp, agent messaging at /agents/{name}/mcp
         └─ Agents manage their own schedules via list/create/delete tools
+        └─ Agents in the same group message each other via message_agent_{peer} tools
 ```
 
 Claude CLI uses its native `~/.claude/` path inside the container. Settings and CLAUDE.md are copied from `/claub/config/` into `~/.claude/` at container startup by the entrypoint script. Agent definitions are passed programmatically via the `--agents` CLI flag (not copied into `~/.claude/agents/`). Credentials persist in a named Docker volume (`claude-home`).
@@ -145,6 +146,30 @@ Schedule data is persisted to `/claub/data/schedules.json` (machine-managed, not
 - Schedule changes trigger a notification in the agent's Discord channel.
 - **Density limits**: Schedule creation is globally rate-limited. At most 5 firings per rolling 24h window and 30 per rolling 7-day window across all agents combined. The check considers both projected future fire times (120-day horizon) and recent firing history.
 - **Firing history**: All schedule firings are logged to `/claub/data/firing_history.json` for debugging. Retention is configurable via `CLAUB_SCHEDULE_HISTORY_RETENTION_DAYS` env var (default 30 days).
+
+### Agent Messaging
+
+Agents listed together in a top-level `agent_groups` entry in `agents.yaml` can
+message each other via `mcp__agents__message_agent_{peer}` — one tool per
+reachable peer, so the roster is visible in the tool list without a lookup call.
+The call blocks: the receiver processes the message in its normal session and
+the reply returns as the tool result; nothing is posted to Discord.
+
+Each agent gets its **own** messaging MCP server, mounted at
+`/agents/{name}/mcp` on the same port as schedules, so the sender's identity
+comes from the mount path rather than the `X-Agent-Name` header. Agents in no
+group still get a mount (with zero tools) so their MCP connection succeeds. All
+servers share one wait-for graph — cycle detection spans the instance. The
+mcp.json URL uses `${CLAUB_AGENT_NAME}` for the path and
+`${CLAUB_MSG_PORT:-9400}` for the port, so the debug CLI can redirect agents to
+its own isolated server (`CLAUB_MSG_PORT` is set for debug runs, receivers are
+spawned with `--no-session-persistence`, and `sessions.json` is never touched).
+Agent names are validated as `[A-Za-z0-9_-]+` at config load since they become
+tool names and URL path segments.
+Safety: wait-for-graph cycle/depth rejection, 15-min sender wait cap (delivery
+shielded to completion), sender inactivity-watchdog exemption while blocked,
+and `MCP_TOOL_TIMEOUT` raised above the wait cap. Design:
+`docs/superpowers/specs/2026-07-24-agent-messaging-design.md`.
 
 ### Agent Context — The Three-Level Split
 

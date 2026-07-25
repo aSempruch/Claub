@@ -1,7 +1,9 @@
 import asyncio
 import json
+import os
 import pytest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch, MagicMock
 from claude_assistant.claude_process import AgentProcess, _apply_reply_sentinel
 
@@ -491,3 +493,56 @@ class TestApplyReplySentinel:
 
     def test_empty_after_sentinel(self) -> None:
         assert _apply_reply_sentinel("scratch\n[REPLY]") == ""
+
+
+class _SlowStdout:
+    """readline() stalls `delay` seconds once, then yields queued lines."""
+
+    def __init__(self, delay: float, lines: list[bytes]) -> None:
+        self.delay = delay
+        self.lines = list(lines)
+        self._stalled = False
+
+    async def readline(self) -> bytes:
+        if not self._stalled:
+            self._stalled = True
+            await asyncio.sleep(self.delay)
+        return self.lines.pop(0) if self.lines else b""
+
+
+def _result_line(text: str) -> bytes:
+    return json.dumps({"type": "result", "result": text}).encode() + b"\n"
+
+
+@pytest.mark.asyncio
+async def test_inactivity_timeout_raises_when_not_awaiting(tmp_path):
+    process = AgentProcess(workspace=tmp_path)
+    process._process = SimpleNamespace(
+        stdout=_SlowStdout(0.3, [_result_line("hi")]), stderr=None, returncode=None
+    )
+    with pytest.raises(RuntimeError, match="silent"):
+        await process._read_until_result(inactivity_timeout=0.05)
+
+
+@pytest.mark.asyncio
+async def test_inactivity_timeout_exempted_while_awaiting_agent_reply(tmp_path):
+    process = AgentProcess(workspace=tmp_path)
+    process.awaiting_agent_reply = True
+    process._process = SimpleNamespace(
+        stdout=_SlowStdout(0.3, [_result_line("hi")]), stderr=None, returncode=None
+    )
+    result = await process._read_until_result(inactivity_timeout=0.05)
+    assert result == "hi"
+
+
+def test_env_sets_mcp_tool_timeout(tmp_path, monkeypatch):
+    monkeypatch.delenv("MCP_TOOL_TIMEOUT", raising=False)
+    process = AgentProcess(workspace=tmp_path)
+    env = process._env()
+    assert env["MCP_TOOL_TIMEOUT"] == "1200000"
+
+
+def test_env_respects_existing_mcp_tool_timeout(tmp_path):
+    process = AgentProcess(workspace=tmp_path)
+    with patch.dict(os.environ, {"MCP_TOOL_TIMEOUT": "5000"}):
+        assert process._env()["MCP_TOOL_TIMEOUT"] == "5000"

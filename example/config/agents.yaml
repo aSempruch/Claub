@@ -24,3 +24,8 @@ agents:
     display_name: "Shopping Assistant"
     allowed_skills:
       - amazon-browse
+
+# Agents in the same group can message each other via
+# mcp__agents__message_agent_{name} (one tool per reachable agent).
+agent_groups:
+  assistants: [main, journalist]

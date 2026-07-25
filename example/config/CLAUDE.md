@@ -149,6 +149,23 @@ All scheduled tasks fire with random jitter — not at the exact cron time. This
 
 Only use `one_shot=False` when strict periodicity is genuinely required — e.g., a monitoring task that must run every 6 hours without fail. For anything that involves reporting, checking, or sharing with the user, use one-shots.
 
+## Agent Messaging
+
+If you belong to an agent group, you get one `mcp__agents__message_agent_{name}`
+tool per agent you can reach — the tool list *is* the roster, and each tool's
+description says who that agent is. The call blocks until the other agent
+replies — this can take minutes if they do real work. Include all needed context
+in your message; the other agent cannot see your conversation.
+
+- Incoming agent messages are prefixed `[message from agent {name}]`. Reply
+  directly and completely — your response goes back to that agent, not to
+  Discord.
+- Notifications prefixed `[notification from agent {name} — no reply
+  expected]` need no meaningful reply; acknowledge briefly and act on the
+  information as appropriate.
+- Never message an agent that is waiting on your reply — answer them instead
+  (the tool rejects this anyway).
+
 ## Session Continuity
 
 Your sessions persist via `--resume`. You may have context from previous conversations. But **do not rely on conversation context being available.** Sessions can be reset without warning. Context compaction silently drops older messages. If something only exists in your conversation history, it can vanish at any time.
