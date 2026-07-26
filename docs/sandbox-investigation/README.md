@@ -1,5 +1,29 @@
 # Claude Code Sandbox Investigation (2026-03-24)
 
+> **⚠️ Partially superseded — re-verified 2026-07-26.** Three "VULNERABLE" rows in the
+> threat table below now test **BLOCKED**: reading other agents' prompts/memory,
+> writing to other agents' workspaces, and modifying config/settings. Recommendation #4
+> (cross-agent memory poisoning) is no longer live. Claude Code's working-directory
+> sandbox tightened after this document was written.
+>
+> This document's stated rationale is also inaccurate as a description of the current
+> system. It says the chosen option works because agents are never granted Bash — but
+> **the Bash tool is present** in agents' tool list today. What actually protects the
+> system is two mechanisms this document does not mention:
+>
+> 1. `Bash` is absent from `settings.json`'s allow list, so non-read-only commands
+>    require interactive approval that a headless stream-json process can never grant.
+> 2. Read-only Bash (`cat`/`ls`/`head`/`tail`/`wc`) is auto-approved but path-checked
+>    against cwd + `additionalDirectories`.
+>
+> **The standing risk is that all of this is upstream CLI behavior, not configuration
+> you control.** It can regress on a Claude CLI upgrade (currently pinned to 2.1.219 in
+> the Dockerfile) without any change on your side.
+>
+> Re-verification detail and the follow-on design are in
+> [`../superpowers/specs/2026-07-26-sandboxed-exec-design.md`](../superpowers/specs/2026-07-26-sandboxed-exec-design.md).
+> The bwrap grid-search results below are unaffected and remain accurate.
+
 Investigation into whether Claude Code's OS-level sandbox (bubblewrap) can run inside the Claub Docker container to protect agent credentials from prompt injection attacks.
 
 ## Background

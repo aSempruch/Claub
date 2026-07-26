@@ -19,8 +19,11 @@ one image dependency and one shared skill. The sandbox is the real deliverable.
 
 ### Why this exists
 
-Agents today have `Write` scoped to their workspace and `/tmp`, and no shell at all.
-That is safe but limiting — anything computational has to be hand-written by the model
+Agents today have `Write` scoped to their workspace and `/tmp`, and a `Bash` tool that
+is present but effectively inert — it is absent from `settings.json`'s allow list, so
+anything beyond the auto-approved read-only set (`cat`/`ls`/`head`/`tail`/`wc`, itself
+path-checked against cwd + `additionalDirectories`) requires interactive approval a
+headless stream-json process can never grant. That is safe but limiting — anything computational has to be hand-written by the model
 or wrapped in a purpose-built MCP (`latex-resume` is the precedent, and it exists
 solely because compiling a `.tex` file needed a subprocess). A generic sandbox
 replaces the "write a new MCP per capability" pattern for everything that is just
@@ -43,8 +46,21 @@ That investigation compared:
 
 Its stated rationale for A was: *"Avoid granting Bash permissions to agents entirely.
 Without Bash, the prompt injection credential exfiltration vector is eliminated at the
-application layer."* The safety of the current setup rests on agents having no shell —
-and this project gives them one.
+application layer."* The safety of the current setup rests on agents being unable to
+execute code — and this project changes that.
+
+**Re-verified 2026-07-26.** Reads *and* writes outside the agent's own workspace are
+currently blocked — `/root/.claude/*`, `/claub/config/*`, and other agents'
+workspaces all deny, through the Read tool, through read-only Bash, and through
+obfuscated `python3 -c`. Tested against production `settings.json` and production cwd
+with a deliberately compliant agent definition, so the result measures enforcement
+rather than the agent's own refusal. Three "VULNERABLE" rows in that document's threat
+table are therefore stale, and it has been annotated.
+
+**The important caveat: none of that protection is configured — it is upstream CLI
+behavior.** It can regress on a Claude CLI upgrade with no change on this side. The
+Dockerfile pins `@anthropic-ai/claude-code@2.1.219`, so upgrades are deliberate, but a
+version bump should re-run the probes in the testing section below.
 
 **The throwaway container resolves the tension that investigation identified rather
 than picking a side in it.** Option B's isolation was expensive because it had to
@@ -253,6 +269,45 @@ a marginal gain.
 `--read-only` is compatible with `uv`: the venv, the uv cache, and all build output
 live on the workspace mount, and `HOME`/`MPLCONFIGDIR`/scratch live on the tmpfs.
 
+## Concurrency
+
+Four distinct races, three of which need explicit handling.
+
+**Different agents, simultaneous calls.** Each gets its own container and its own
+workspace mount; there is no shared mutable state. Bounded only by the global
+semaphore (default 3) so Manim renders cannot saturate the host.
+
+**Same agent, simultaneous calls — needs a per-agent lock.** `AgentProcess` serializes
+turns per agent, but Claude can emit *parallel tool calls within a single turn*, so one
+agent can fire two `run` calls at once. Both mount the same workspace, and both may
+race on `{workspace}/.venv` (two concurrent `uv venv` bootstraps corrupt it) or write
+the same output file. The bridge therefore holds a per-agent lock in addition to the
+global semaphore. Losing intra-agent parallelism costs nothing here — the CPU cap makes
+it worthless anyway.
+
+**Timeouts must kill the container, not the client.** `subprocess.run(["docker",
+"run", ...], timeout=N)` kills the *docker CLI process*; the container keeps running,
+still holding CPU and its workspace mount. Each run therefore gets an explicit
+`--name claub-exec-{agent}-{uuid}`, and timeout handling issues `docker rm -f {name}`
+before returning `timed_out: true`.
+
+**Orphans.** On startup the bridge reaps anything left behind by a crash:
+`docker ps -aq --filter name=claub-exec- | xargs -r docker rm -f`.
+
+### Timeout budget
+
+Queue wait is bounded separately from execution, so a queued call fails fast with an
+actionable "sandbox busy, N ahead" rather than silently blocking for minutes. The chain
+must be strictly ordered, or the agent sees an opaque MCP timeout instead of the
+bridge's structured error:
+
+```
+MCP_TOOL_TIMEOUT  >  MCP HTTP client timeout  >  bridge total (queue + exec)  >  exec timeout
+```
+
+`MCP_TOOL_TIMEOUT` is already raised above default for agent messaging; this must not
+lower it.
+
 ## Dependency management
 
 The image's baked packages cover the common cases. For anything else, the skill
@@ -283,13 +338,19 @@ reachable.
 a kernel exploit escapes into the Docker Desktop VM. The threat model is *a
 prompt-injected LLM writing Python*, and for that this is more than sufficient.
 
-**Related pre-existing issues.** `/root/.claude/.credentials.json` exists in the bot
-container and there are no `permissions.deny` rules in `settings.json`. The 2026-03-24
-investigation found credential reads and cross-agent workspace writes were both
-reachable, but via Bash — which agents no longer have. Whether they are reachable
-through the `Read`/`Write` tools alone is being verified separately. These are
-pre-existing and independent of this design, but they should be closed *before* phase 1
-ships, because the sandbox makes an injected agent meaningfully more capable.
+**Verified clear.** The credential-read and cross-agent-write concerns raised by the
+2026-03-24 investigation were probed on 2026-07-26 and are already blocked; no fix was
+needed and `settings.json` was not modified. See the re-verification note above,
+including the caveat that this protection is upstream behavior rather than
+configuration.
+
+**`permissions.deny` syntax, if it is ever needed.** Absolute-path rules require a
+**double** leading slash. `Read(/root/.claude/**)` parses without error and silently
+does nothing; `Read(//root/.claude/**)` denies correctly. Verified empirically against a
+file that was otherwise readable. Note this is a different mechanism from
+`sandbox.filesystem.denyRead` in the prior investigation, and it is confirmed only for
+the `Read` tool — whether it also constrains read-only Bash was not tested, and the
+prior art's finding that `denyRead` misses Bash means it should not be assumed.
 
 ## Configuration
 
@@ -352,9 +413,26 @@ sandbox cannot see uploaded files. An agent can copy a text file across with
 work without a change.
 
 **Recommended fix (pending confirmation):** download into
-`{workspace}/.attachments/{message_id}/` instead. One line in `attachments.py`, no
-compose change, no second mount, and path identity comes free since the workspace is
-already mounted.
+`{workspace}/.attachments/{message_id}/` instead of container `/tmp`. Only the
+destination path in `attachments.py` changes — the footer appended to the message text
+keeps its existing format, just with different paths.
+
+It works because the workspace is *already* host-backed and already the sandbox's one
+writable mount, so this needs no new mount, no compose change, and no bridge config.
+Path identity comes free: the agent can hand an attachment path straight to a script
+and it resolves identically in both containers. Dot-prefixed so it stays out of the
+agent's normal workspace listing, and the agent can already read, move, and delete
+there, so keeping one file and dropping the rest needs no new tooling.
+
+Two consequences to handle:
+
+- Files stop being wiped on container rebuild and accumulate. The agent can prune its
+  own, but the bot should sweep entries older than N days at startup.
+- `.attachments/` must be gitignored in the workspace — several agents have the git MCP
+  and would otherwise commit user uploads into their local history.
+
+`CLAUDE.md`'s message-flow section documents the current `/tmp` path and the
+wiped-on-rebuild behavior, so it changes too.
 
 **Alternative considered:** bind-mount a host directory at `/tmp/claub-attachments`.
 Costs a `docker-compose.yml` change, a second read-only mount in the bridge, and a
