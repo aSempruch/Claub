@@ -26,6 +26,44 @@ solely because compiling a `.tex` file needed a subprocess). A generic sandbox
 replaces the "write a new MCP per capability" pattern for everything that is just
 *running code*.
 
+### Relationship to the 2026-03-24 sandbox investigation
+
+[`docs/sandbox-investigation/README.md`](../../sandbox-investigation/README.md)
+evaluated exactly this problem and chose differently. That decision must be re-derived
+here, not inherited, because **this design removes its load-bearing assumption.**
+
+That investigation compared:
+
+- **Option A (chosen):** no inner sandbox, Docker defaults preserved. Safe against
+  container escape and runtime CVEs.
+- **Option B (rejected):** Claude Code's bwrap sandbox inside the bot container.
+  Blocks credential reads at the OS level, but requires `SYS_ADMIN`, `NET_ADMIN`,
+  `apparmor:unconfined`, and a custom seccomp profile — precisely the primitives
+  container-escape exploits need.
+
+Its stated rationale for A was: *"Avoid granting Bash permissions to agents entirely.
+Without Bash, the prompt injection credential exfiltration vector is eliminated at the
+application layer."* The safety of the current setup rests on agents having no shell —
+and this project gives them one.
+
+**The throwaway container resolves the tension that investigation identified rather
+than picking a side in it.** Option B's isolation was expensive because it had to
+happen *inside* the container holding the credentials. Here it happens in a separate
+container that never had them. The bot container's Docker hardening is untouched — no
+`SYS_ADMIN`, no `NET_ADMIN`, no seccomp relaxation, no AppArmor exception — so the
+escape and supply-chain risk that motivated Option A is unchanged, while the
+prompt-injection protection that motivated Option B is obtained for free.
+
+Two of that document's standing recommendations are also touched:
+
+- **#3 (restrict network egress)** — deliberately *not* adopted for the sandbox, on the
+  grounds that `WebFetch` already provides the same reach. See the network decision
+  record below.
+- **#4 (cross-agent memory poisoning)** — improved, not solved. Code in the sandbox can
+  reach only the calling agent's workspace, so this execution path cannot poison
+  another agent's memory. Whether the *agent itself* can still write cross-workspace
+  through its normal tools is a separate pre-existing question, under investigation.
+
 ## Decision Records
 
 ### Host-side bridge, not a Docker socket in the bot container
@@ -245,11 +283,13 @@ reachable.
 a kernel exploit escapes into the Docker Desktop VM. The threat model is *a
 prompt-injected LLM writing Python*, and for that this is more than sufficient.
 
-**Related pre-existing issue.** `/root/.claude/.credentials.json` exists in the bot
-container and there are no `permissions.deny` rules in `settings.json`. If Claude Code's
-`Read` tool will open absolute paths outside cwd, agents can already read those
-credentials today, independent of this project. Being verified separately; the fix is a
-`deny` entry, not part of this design.
+**Related pre-existing issues.** `/root/.claude/.credentials.json` exists in the bot
+container and there are no `permissions.deny` rules in `settings.json`. The 2026-03-24
+investigation found credential reads and cross-agent workspace writes were both
+reachable, but via Bash — which agents no longer have. Whether they are reachable
+through the `Read`/`Write` tools alone is being verified separately. These are
+pre-existing and independent of this design, but they should be closed *before* phase 1
+ships, because the sandbox makes an injected agent meaningfully more capable.
 
 ## Configuration
 
