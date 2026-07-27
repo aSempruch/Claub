@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.asempruch.exec-bridge</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/env</string>
+        <string>python3</string>
+        <string>/ABSOLUTE/PATH/TO/scripts/exec-bridge/bridge.py</string>
+        <string>--config</string>
+        <string>/ABSOLUTE/PATH/TO/exec-bridge-config.json</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <!-- The bridge shells out to `docker`, which resolves the colima
+             context from ~/.docker/config.json (HOME-dependent). launchd envs
+             are minimal, so pin the socket explicitly. -->
+        <key>DOCKER_HOST</key>
+        <string>unix:///Users/you/.colima/default/docker.sock</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/Users/YOURNAME/Library/Logs/claub-exec-bridge/stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/YOURNAME/Library/Logs/claub-exec-bridge/stderr.log</string>
+</dict>
+</plist>

@@ -1,0 +1,19 @@
+{
+  "listen_host": "127.0.0.1",
+  "listen_port": 9501,
+  "workspaces_root": "/Users/you/docker/claub/workspaces",
+  "image": "claub-exec",
+  "docker_bin": "docker",
+  "secret": "CHANGE_ME_MATCH_ENVRC_EXEC_BRIDGE_SECRET",
+  "max_concurrent": 1,
+  "default_timeout": 180,
+  "max_timeout": 600,
+  "bridge_total_timeout": 540,
+  "agents": {
+    "leetcode-coach": {
+      "extra_mounts": [
+        "/Users/you/repos/shared/data:/claub/workspaces/leetcode-coach/shared-data"
+      ]
+    }
+  }
+}
