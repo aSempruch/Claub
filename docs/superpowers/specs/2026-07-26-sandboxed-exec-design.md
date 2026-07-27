@@ -645,6 +645,26 @@ asserted. Each asserts the sandbox *fails*:
   network.** Asserts the split lives in endpoint routing, not command inspection.
 - `POST /install` with a `command` field → field ignored, only `packages` honored
 
+**The `/install` network-egress class (two holes found and fixed by a red-team pass on
+2026-07-27, both reproduced end-to-end before fixing).** The invariant, now explicit and
+regression-tested: *no file writable by a network-none `run` may be executed by the
+networked `install`.* Two paths violated it and are covered by dedicated adversarial
+tests:
+
+- **Flag injection.** `PACKAGE_RE` accepted a leading `-`, so `-e`, `--pre`, `--no-deps`
+  and a bare `.` validated as package names. `install(["-e", "."])` built the agent's own
+  `setup.py` under `--network bridge`. Fixed: names must be alphanumeric-bookended, and
+  the bridge emits `--` before the names so nothing downstream parses as a flag or a
+  local path. Test: `install(["-e", "."])` with a network-phoning `setup.py` staged in the
+  workspace → 400, `setup.py` never runs.
+- **Venv execution.** The install executed the workspace venv python, whose interpreter
+  symlink *and* site-packages are agent-writable — an agent-planted `.pth` runs on
+  interpreter startup, so `install(["rich"])` ran agent code with network. Fixed: install
+  runs the trusted read-only system interpreter (`/usr/local/bin/python3.12`) and
+  `--target`s the venv's site-packages; the venv python is executed only by network-none
+  `run`. Test: a network-phoning `.pth` planted in the venv site-packages → not executed
+  during `install`.
+
 **Re-run these after any Claude CLI version bump.** The bot container's protections are
 upstream behavior rather than configuration, and nothing else here would catch a
 regression.
