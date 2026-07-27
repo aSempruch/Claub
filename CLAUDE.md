@@ -40,6 +40,10 @@ AssistantBot (discord.py)  [runs in Docker container]
     └─ MCP Server (FastMCP, localhost:9400) — schedules at /mcp, agent messaging at /agents/{name}/mcp
         └─ Agents manage their own schedules via list/create/delete tools
         └─ Agents in the same group message each other via message_agent_{peer} tools
+
+Host-side daemons (outside the container, launchd):
+    playwright-bridge :9500 — one browser MCP process per agent
+    exec-bridge       :9501 — spawns a throwaway claub-exec container per sandbox call
 ```
 
 Claude CLI uses its native `~/.claude/` path inside the container. Settings and CLAUDE.md are copied from `/claub/config/` into `~/.claude/` at container startup by the entrypoint script. Agent definitions are passed programmatically via the `--agents` CLI flag (not copied into `~/.claude/agents/`). Credentials persist in a named Docker volume (`claude-home`).
@@ -74,8 +78,11 @@ mcps/                             # MCP servers baked into the image at /app/mcp
   nextcloud/                      # Nextcloud file sharing via WebDAV
   hass/                           # Home Assistant — narrow typed wrappers
   file-download/                  # Least-privilege URL → workspace fetch
+  sandbox/                        # Throwaway container exec via the host exec bridge
 
+docker/exec-sandbox/              # claub-exec image (built by hand, never in compose)
 scripts/playwright-bridge/        # Host-side daemon managing per-agent browser MCPs
+scripts/exec-bridge/              # Host-side daemon spawning sandbox containers
 example/                          # Starter configuration (sanitized)
 docs/                             # Specs, plans, investigations
 
@@ -136,6 +143,22 @@ MCP servers give agents access to external tools without granting arbitrary code
 Servers baked into the image live at `/app/mcps/`; instance servers at `/claub/mcps/` (auto-`uv sync`'d by the entrypoint). See the `claub-mcp-servers` and `build-mcp-server` skills.
 
 Playwright is the exception — it runs **host-side**, one process per agent, managed by a bridge daemon via lifecycle hooks. See the `claub-playwright` skill.
+
+### Sandboxed Execution
+
+Agents opted in via `allowed_tools_additional: ["mcp__sandbox__*"]` get
+`mcp__sandbox__run(command)` and `mcp__sandbox__install(packages)` — arbitrary
+shell in a throwaway `claub-exec` container that holds no secrets and mounts
+only the calling agent's workspace (same path, `/claub/workspaces/{agent}`).
+Spawned host-side by `scripts/exec-bridge/` (launchd, port 9501), mirroring the
+Playwright bridge — the Docker socket never enters the bot container. Two
+endpoints carry the trust boundary: `/exec` takes a command and always runs
+`--network none`; `/install` takes package names only, never a command, and the
+bridge validates the names and builds the argv itself. The
+`.claude/` dir is mounted read-only so injected code cannot write
+`settings.local.json` to escalate. Image built by hand:
+`docker build -t claub-exec docker/exec-sandbox/`. Design:
+`docs/superpowers/specs/2026-07-26-sandboxed-exec-design.md`.
 
 ### Lifecycle Hooks
 

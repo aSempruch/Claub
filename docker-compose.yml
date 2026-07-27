@@ -10,6 +10,10 @@ services:
       - HASS_TOKEN=${HASS_TOKEN}
       - STEAM_API_KEY=${STEAM_API_KEY}
       - NOTION_TOKEN=${NOTION_TOKEN}
+      # Shared secret for the host-side exec bridge (scripts/exec-bridge).
+      # Forwarded from here into the sandbox MCP's env block in the per-agent
+      # .mcp.json; never reaches the sandbox container itself.
+      - EXEC_BRIDGE_SECRET=${EXEC_BRIDGE_SECRET}
       - TZ=${TZ:-America/New_York}
       - CLAUB_HOST_PATH=${CLAUB_DATA_PATH}
       # Keep the Dockerfile's pinned CLI version — the CLI otherwise

@@ -5,6 +5,7 @@
       "mcp__schedules__*",
       "mcp__agents__*",
       "mcp__git__*",
+      "mcp__sandbox__*",
       "mcp__nextcloud__*",
       "WebFetch",
       "WebSearch"

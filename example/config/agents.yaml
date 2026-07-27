@@ -25,6 +25,17 @@ agents:
     allowed_skills:
       - amazon-browse
 
+  # The execution sandbox is OFF by default — opt in per agent. The agent also
+  # needs a "sandbox" server in its {name}.mcp.json (see journalist.mcp.json)
+  # and "mcp__sandbox__*" in settings.json's allow list, and its name must be in
+  # the exec bridge's config.json allowlist or calls 404.
+  # leetcode-coach:
+  #   channel_id: "YOUR_CHANNEL_ID"
+  #   allowed_tools_additional:
+  #     - "mcp__sandbox__*"
+  #   allowed_skills:
+  #     - algorithm-animation
+
 # Agents in the same group can message each other via
 # mcp__agents__message_agent_{name} (one tool per reachable agent).
 agent_groups:

@@ -3,6 +3,14 @@
     "playwright": {
       "type": "http",
       "url": "http://host.docker.internal:3847/mcp"
+    },
+    "sandbox": {
+      "command": "uv",
+      "args": ["--directory", "/app/mcps/sandbox", "run", "server.py"],
+      "env": {
+        "CLAUB_AGENT_NAME": "${CLAUB_AGENT_NAME}",
+        "EXEC_BRIDGE_SECRET": "${EXEC_BRIDGE_SECRET}"
+      }
     }
   }
 }
