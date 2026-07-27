@@ -176,9 +176,8 @@ deliberately unvalidated. Shell injection is not a threat here; running arbitrar
 commands is the feature. It is passed as a single `subprocess.run` argv element, never
 through a host shell.
 
-**Concurrency.** A semaphore, default 3. Manim saturates cores; without a cap, three
-agents rendering concurrently makes the host unusable. Requests over the cap block
-rather than fail, bounded by the request timeout.
+**Concurrency.** A semaphore, **default 1** — see the host environment section for why.
+Requests over the cap queue rather than fail, bounded separately from execution time.
 
 ### Component 2 — `docker/exec-sandbox/Dockerfile` (image `claub-exec`)
 
@@ -231,7 +230,7 @@ docker run --rm
   --tmpfs /tmp:size=1g,exec
   --cap-drop ALL
   --security-opt no-new-privileges
-  --memory 2g --cpus 2 --pids-limit 256
+  --memory 1g --cpus 1 --pids-limit 256
   -e HOME=/tmp
   -e MPLCONFIGDIR=/tmp/mpl
   -e UV_CACHE_DIR=/claub/workspaces/{agent}/.uv-cache
@@ -260,30 +259,80 @@ render returns a `/work/media/...` path that the agent must translate before put
 in a `[FILE:]` marker — a recurring error for no benefit. Identical paths everywhere
 means no translation ever.
 
-**Root inside the container is accepted.** On Docker Desktop that is root in a Linux
-VM, not on macOS. `--cap-drop ALL`, `--security-opt no-new-privileges`, and a read-only
-root filesystem are the actual containment; a non-root uid would additionally require
-chowning workspaces that the bot writes as root, trading a real permissions problem for
-a marginal gain.
+**Root inside the container is accepted.** Under Colima that is root in the Lima VM,
+not on macOS — the same VM boundary the 2026-03-24 investigation weighed when it noted
+"the Colima VM provides a meaningful additional boundary." `--cap-drop ALL`,
+`--security-opt no-new-privileges`, and a read-only root filesystem are the actual
+containment; a non-root uid would additionally require chowning workspaces that the bot
+writes as root, trading a real permissions problem for a marginal gain.
 
 `--read-only` is compatible with `uv`: the venv, the uv cache, and all build output
 live on the workspace mount, and `HOME`/`MPLCONFIGDIR`/scratch live on the tmpfs.
 
+## Host environment (Colima)
+
+The host runs **Colima**, not Docker Desktop, and its allocation is the binding
+constraint on this design:
+
+| | |
+|---|---|
+| VM | Colima on macOS Virtualization.framework (vz), aarch64 |
+| Allocation | **2 CPU → 4 CPU**, 4 GiB RAM, 100 GiB disk |
+| Mount type | **virtiofs** |
+| Docker socket | `unix:///Users/you/.colima/default/docker.sock`, context `colima` |
+| Mac | 8 GB RAM, 8 cores |
+| Already resident | 5 containers (~510 MiB) — three Claub instances, `shared`, `icf-emulator` |
+
+**Memory is the scarce resource, not CPU.** The Mac has 8 GB total and macOS needs most
+of what Colima doesn't take, so the VM's 4 GiB stays fixed; roughly 3.3 GiB of it is
+free. CPU is not exclusively reserved and the 8 cores are mostly idle, so the VM's CPU
+allocation is being raised 2 → 4 (`colima stop && colima start --cpu 4 --memory 4`) as
+a **prerequisite step** — it roughly halves render times for free. That restart takes
+the running containers down briefly, including all three Claub bots.
+
+Two unused containers (`openai-edge-tts`, `wyoming_openai`) were stopped on 2026-07-26,
+freeing ~200 MiB and the ~18% of a core the former consumed continuously. They are
+stopped, not removed — `docker start` restores them, and `restart=unless-stopped` means
+an explicit stop persists.
+
+This is why the sandbox gets `--memory 1g --cpus 1` and a concurrency cap of 1. An
+earlier draft specified 2g/2cpu with a cap of 3, which asks for 6 GB and 6 CPUs from a
+4 GiB VM. `-ql` (480p15) is consequently close to a requirement for Manim, not just a
+default.
+
+**virtiofs is a relief, not a risk.** Under Colima's older sshfs default, creating a
+venv and writing Manim's many small partial-movie files across the mount would have
+been painfully slow. It isn't.
+
+**The launchd plist must set `DOCKER_HOST` explicitly.** The bridge shells out to
+`docker`, which resolves the `colima` context from `~/.docker/config.json` — HOME-
+dependent, and launchd environments are minimal. `playwright-bridge`'s plist template
+sets only `PATH`, and it never needed the docker CLI. Setting
+`DOCKER_HOST=unix:///Users/you/.colima/default/docker.sock` in the plist removes the
+ambiguity entirely.
+
+**arm64 is an open build risk.** This is aarch64 Linux. Manim pulls `pycairo`,
+`ManimPango`, `moderngl`, `mapbox-earcut`, and `skia-pathops`; linux/arm64 wheel
+coverage across those is uneven and some may need source builds with extra Dockerfile
+build dependencies. **Build the `claub-exec` image first in phase 1**, before the bridge
+or the MCP, so this surfaces while it is still cheap to change course.
+
 ## Concurrency
 
-Four distinct races, three of which need explicit handling.
+Four distinct races, two of which need explicit handling at a cap of 1.
 
 **Different agents, simultaneous calls.** Each gets its own container and its own
-workspace mount; there is no shared mutable state. Bounded only by the global
-semaphore (default 3) so Manim renders cannot saturate the host.
+workspace mount; there is no shared mutable state. Serialized by the global semaphore.
 
-**Same agent, simultaneous calls — needs a per-agent lock.** `AgentProcess` serializes
-turns per agent, but Claude can emit *parallel tool calls within a single turn*, so one
-agent can fire two `run` calls at once. Both mount the same workspace, and both may
-race on `{workspace}/.venv` (two concurrent `uv venv` bootstraps corrupt it) or write
-the same output file. The bridge therefore holds a per-agent lock in addition to the
-global semaphore. Losing intra-agent parallelism costs nothing here — the CPU cap makes
-it worthless anyway.
+**Same agent, simultaneous calls.** `AgentProcess` serializes turns per agent, but
+Claude can emit *parallel tool calls within a single turn*, so one agent can fire two
+`run` calls at once. Both mount the same workspace and may race on `{workspace}/.venv`
+(two concurrent `uv venv` bootstraps corrupt it) or write the same output file.
+
+At a global cap of 1 this is already handled — everything serializes — so **no
+per-agent lock is built**. The reasoning is recorded because the moment the cap is
+raised above 1, the race becomes live and a per-agent lock is required alongside the
+global semaphore.
 
 **Timeouts must kill the container, not the client.** `subprocess.run(["docker",
 "run", ...], timeout=N)` kills the *docker CLI process*; the container keeps running,
