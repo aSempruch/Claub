@@ -391,7 +391,7 @@ constraint on this design:
 | | |
 |---|---|
 | VM | Colima on macOS Virtualization.framework (vz), aarch64 |
-| Allocation | **2 CPU → 4 CPU**, 4 GiB RAM, 100 GiB disk |
+| Allocation | **4 CPU**, 4 GiB RAM, 100 GiB disk |
 | Mount type | **virtiofs** |
 | Docker socket | `unix:///Users/you/.colima/default/docker.sock`, context `colima` |
 | Mac | 8 GB RAM, 8 cores |
@@ -400,9 +400,10 @@ constraint on this design:
 **Memory is the scarce resource, not CPU.** The Mac has 8 GB total and macOS needs most
 of what Colima doesn't take, so the VM's 4 GiB stays fixed; roughly 3.3 GiB of it is
 free. CPU is not exclusively reserved and the 8 cores are mostly idle, so the VM's CPU
-allocation is being raised 2 → 4 (`colima stop && colima start --cpu 4 --memory 4`) as
-a **prerequisite step** — it roughly halves render times for free. That restart takes
-the running containers down briefly, including all three Claub bots.
+allocation **was raised 2 → 4 on 2026-07-26** (`colima stop && colima start --cpu 4
+--memory 4`) — roughly halving render times for free. All containers restarted
+automatically and the bot came back healthy; the two stopped services correctly stayed
+down, since an explicit stop persists. **This prerequisite is already done.**
 
 Two unused containers (`openai-edge-tts`, `wyoming_openai`) were stopped on 2026-07-26,
 freeing ~200 MiB and the ~18% of a core the former consumed continuously. They are
@@ -593,7 +594,7 @@ sandbox cannot see uploaded files. An agent can copy a text file across with
 `Read` + `Write`, but not a binary. "Upload a CSV, have the agent plot it" does not
 work without a change.
 
-**Recommended fix (pending confirmation):** download into
+**Decided 2026-07-26:** download into
 `{workspace}/.attachments/{message_id}/` instead of container `/tmp`. Only the
 destination path in `attachments.py` changes — the footer appended to the message text
 keeps its existing format, just with different paths.
@@ -615,13 +616,13 @@ Two consequences to handle:
 `CLAUDE.md`'s message-flow section documents the current `/tmp` path and the
 wiped-on-rebuild behavior, so it changes too.
 
-**Alternative considered:** bind-mount a host directory at `/tmp/claub-attachments`.
+**Alternative rejected:** bind-mount a host directory at `/tmp/claub-attachments`.
 Costs a `docker-compose.yml` change, a second read-only mount in the bridge, and a
 retention sweeper — files would stop being wiped on rebuild and accumulate
 indefinitely. Its one advantage is real: inbound user files stay read-only and separate
 from agent-authored files, so injected code cannot rewrite what the user uploaded.
 
-Either way this is a **separate change**, not folded into the sandbox work.
+This remains a **separate change**, not folded into phase 1.
 
 ## Testing
 
@@ -662,8 +663,8 @@ across two separate `run` calls → a full Manim render ending in a Discord post
 
 ## Phasing
 
-**Prerequisite.** `colima stop && colima start --cpu 4 --memory 4`. Restarts every
-container including all three Claub bots, so pick the moment.
+**Prerequisite — already done (2026-07-26).** The Colima VM runs 4 CPU / 4 GiB and
+`EXEC_BRIDGE_SECRET` is in `.envrc`. Implementation starts at step 1.
 
 1. **`claub-exec` image — build and smoke-test this FIRST**, before the bridge or the
    MCP. aarch64 source builds for `pycairo`, `manimpango`, and `moderngl` are the only
@@ -679,10 +680,17 @@ container including all three Claub bots, so pick the moment.
 
 Steps 1-4 are independently valuable and independently testable. Step 5 is small.
 
+## Settled
+
+- **Colima 2 → 4 CPU** — done 2026-07-26, containers verified healthy.
+- **Attachments** — workspace `.attachments/`, as a separate change after phase 1.
+- **Bridge secret** — `EXEC_BRIDGE_SECRET`, a 64-char hex value, already appended to
+  `.envrc`. Note `.envrc` is readable only by writing to it: the permission rules deny
+  reads, so verify it by sourcing in a subshell and checking `${#EXEC_BRIDGE_SECRET}`
+  rather than grepping.
+
 ## Open Items
 
-- Attachments: workspace `.attachments/` (recommended) vs. host bind mount. Not
-  blocking phase 1.
 - Whether the `algorithm-animation` skill gets a sanitized copy in `example/`.
 - Whether `--tmpfs /tmp:size=256m,exec` is accepted in the `path:opts` short form on
   this Docker version — verify during step 1 rather than assuming. `exec` is needed
