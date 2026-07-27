@@ -141,9 +141,13 @@ def test_install_gets_bridge_network_and_builds_own_command(bridge):
     _, body = post(f"{base}/install/leetcode-coach", {"packages": ["rich"]},
                    {"X-Exec-Secret": "s3cret"})
     assert "--network bridge" in body["stdout"]
-    assert "uv pip install --python /claub/workspaces/leetcode-coach/.venv/bin/python rich" \
+    # System interpreter + --target into the venv site-packages — the install
+    # never executes the agent-writable venv python.
+    assert "uv pip install --python /usr/local/bin/python3.12 --target " \
+        "/claub/workspaces/leetcode-coach/.venv/lib/python3.12/site-packages -- rich" \
         in body["stdout"]
     assert "uv venv --system-site-packages" in body["stdout"]
+    assert "--python /claub/workspaces/leetcode-coach/.venv/bin/python" not in body["stdout"]
 
 
 def test_install_ignores_a_command_field_entirely(bridge):
@@ -155,8 +159,16 @@ def test_install_ignores_a_command_field_entirely(bridge):
         {"X-Exec-Secret": "s3cret"},
     )
     assert "curl" not in body["stdout"]
-    assert "uv pip install --python /claub/workspaces/leetcode-coach/.venv/bin/python rich" \
-        in body["stdout"]
+    assert "uv pip install --python /usr/local/bin/python3.12 --target " in body["stdout"]
+
+
+def test_install_rejects_option_flag_as_package(bridge):
+    """`install(['-e', '.'])` must be rejected bridge-side, not run as flags."""
+    base, _ = bridge
+    code, body = post(f"{base}/install/leetcode-coach", {"packages": ["-e", "."]},
+                      {"X-Exec-Secret": "s3cret"})
+    assert code == 400
+    assert "invalid package name" in json.dumps(body)
 
 
 def test_install_rejects_flag_injection_bridge_side(bridge):

@@ -5,7 +5,22 @@ import re
 from collections.abc import Iterable
 
 AGENT_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
-PACKAGE_RE = re.compile(r"^[A-Za-z0-9._-]+(==[A-Za-z0-9._-]+)?$")
+# A distribution name must START and END with an alphanumeric. This is not
+# cosmetic: the old `^[A-Za-z0-9._-]+...$` accepted a leading `-`, so `-e`,
+# `--pre`, `--no-deps` and a bare `.` all validated as "package names" and were
+# joined straight into `uv pip install ...`, turning the networked /install
+# path into arbitrary `uv` invocation (e.g. `-e .` builds the agent's own
+# setup.py WITH network). Requiring alphanumeric bookends rejects every flag
+# and the local-build `.`.
+PACKAGE_RE = re.compile(
+    r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?(==[A-Za-z0-9][A-Za-z0-9._+!-]*)?$"
+)
+
+# The container's trusted, read-only system interpreter. `install` executes THIS
+# to do the install — never the agent's workspace venv python, whose
+# site-packages is agent-writable and can carry a `.pth` that runs arbitrary
+# code on interpreter startup (and this path has network).
+SYSTEM_PYTHON = "/usr/local/bin/python3.12"
 
 
 def validate_agent(name: str, allowed: list[str]) -> None:
@@ -39,12 +54,32 @@ def build_install_command(agent: str, packages: list[str]) -> str:
     """Build the install command from validated names. The caller supplies
     NAMES ONLY — there is no code path by which a caller provides a command on
     the networked endpoint.
+
+    Security invariant: *no file writable by a network-none `run` may be
+    executed by this networked `install`.* The workspace venv (interpreter
+    symlink AND site-packages) is agent-writable, so executing it here would let
+    injected code reach the network — the exact capability the run/install split
+    exists to deny. Therefore the install runs the trusted read-only system
+    interpreter and drops wheels into the venv's site-packages via `--target`;
+    the venv's own python is executed only later by network-none `run`.
     """
     names = validate_packages(packages)
     ws = f"/claub/workspaces/{agent}"
-    venv_python = f"{ws}/.venv/bin/python"
-    bootstrap = f"[ -x {venv_python} ] || uv venv --system-site-packages {ws}/.venv"
-    return f"{bootstrap} && uv pip install --python {venv_python} " + " ".join(names)
+    venv = f"{ws}/.venv"
+    site = f"{venv}/lib/python3.12/site-packages"
+    # The venv exists only for the RUN-TIME interpreter; --system-site-packages
+    # keeps the baked manim/numpy visible. Creating it does not execute agent
+    # code; a pre-existing (possibly poisoned) venv is fine because we never
+    # execute its python on this path.
+    bootstrap = f"[ -d {venv} ] || uv venv --system-site-packages {venv}"
+    # `--` so nothing after it can be parsed as a flag — defense in depth beside
+    # PACKAGE_RE. Even if a name slipped past the regex, uv treats it as a
+    # (non-existent) distribution, never a flag or a local path.
+    install = (
+        f"uv pip install --python {SYSTEM_PYTHON} --target {site} -- "
+        + " ".join(names)
+    )
+    return f"{bootstrap} && {install}"
 
 
 def clamp_timeout(requested: int | None, default: int, maximum: int) -> int:

@@ -23,6 +23,12 @@ def test_validate_packages_rejects_flag_injection():
         _h.validate_packages(["--index-url=http://evil"])
 
 
+@pytest.mark.parametrize("bad", ["-e", "--pre", ".", "-", "foo."])
+def test_validate_packages_rejects_option_flags_and_local_build(bad):
+    with pytest.raises(ValueError):
+        _h.validate_packages([bad])
+
+
 def test_validate_packages_rejects_space_smuggling():
     with pytest.raises(ValueError):
         _h.validate_packages(["rich --upgrade"])

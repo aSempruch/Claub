@@ -3,7 +3,12 @@ from __future__ import annotations
 
 import re
 
-PACKAGE_RE = re.compile(r"^[A-Za-z0-9._-]+(==[A-Za-z0-9._-]+)?$")
+# Must start AND end with an alphanumeric so option flags (`-e`, `--pre`) and a
+# bare `.` are rejected. Kept in lockstep with the bridge's copy, but that copy
+# is the enforcing control — see validate_packages below.
+PACKAGE_RE = re.compile(
+    r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?(==[A-Za-z0-9][A-Za-z0-9._+!-]*)?$"
+)
 
 
 def validate_packages(packages: list[str]) -> list[str]:

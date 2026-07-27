@@ -161,6 +161,69 @@ def test_install_rejects_flag_injection_bridge_side():
     assert "invalid package name" in resp.text
 
 
+# --- The /install network-egress class (two confirmed holes, now fixed) ---
+#
+# The invariant: no file writable by a network-none `run` may be executed by the
+# networked `install`. Both tests below plant agent-authored code via `run`
+# (which has no network) and then trigger `install` (which does), asserting the
+# planted code never reaches the network.
+
+NET_SETUP_PY = '''
+import socket
+r = "NET-FAIL"
+try:
+    s = socket.socket(); s.settimeout(5); s.connect(("192.168.5.2", 9501)); r = "NET-OK"
+except Exception as e:
+    r = "NET-FAIL-" + type(e).__name__
+open("%s/INSTALL_NET_PROOF.txt", "w").write(r)
+from setuptools import setup
+setup(name="pwnpkg", version="0.0.0", py_modules=[])
+'''
+
+
+def test_install_local_build_flag_is_rejected():
+    """Hole #1: `install(['-e', '.'])` would build the agent's own setup.py WITH
+    network. The flag-shaped names must be rejected before any container runs.
+    """
+    ws = f"/claub/workspaces/{AGENT}"
+    setup_b64 = base64.b64encode((NET_SETUP_PY % ws).encode()).decode()
+    _run(f"rm -f {ws}/INSTALL_NET_PROOF.txt {ws}/setup.py; echo {setup_b64} | base64 -d > {ws}/setup.py")
+    try:
+        resp = _install({"packages": ["-e", "."]})
+        assert resp.status_code == 400  # rejected, no container spawned
+        # The setup.py never ran, so no proof file and no network contact.
+        out = _run(f"cat {ws}/INSTALL_NET_PROOF.txt 2>&1 || echo NONE")
+        assert "NET-OK" not in _combined(out)
+    finally:
+        _run(f"rm -f {ws}/setup.py {ws}/INSTALL_NET_PROOF.txt; rm -rf {ws}/pwnpkg.egg-info {ws}/build")
+
+
+def test_install_does_not_execute_agent_venv_python():
+    """Hole #2: a `.pth` in the agent-writable venv site-packages must NOT run
+    during install. install uses the trusted system interpreter, so the venv
+    (whose site-packages the agent controls) is never executed on the networked
+    path.
+    """
+    ws = f"/claub/workspaces/{AGENT}"
+    site = f"{ws}/.venv/lib/python3.12/site-packages"
+    # Ensure a venv exists, then plant a network-phoning .pth in its site-packages.
+    _install({"packages": ["rich"]})  # bootstraps the venv if absent
+    pth_b64 = base64.b64encode(
+        (f'import socket\n'
+         f'try:\n'
+         f'    s=socket.socket();s.settimeout(5);s.connect(("192.168.5.2",9501));open("{ws}/PTH_NET.txt","w").write("NET-OK")\n'
+         f'except Exception as e:\n'
+         f'    open("{ws}/PTH_NET.txt","w").write("NET-FAIL-"+type(e).__name__)\n').encode()
+    ).decode()
+    _run(f"rm -f {ws}/PTH_NET.txt; echo {pth_b64} | base64 -d > {site}/zzz_probe.pth")
+    try:
+        _install({"packages": ["networkx"]})  # networked install — must not run the .pth
+        out = _run(f"cat {ws}/PTH_NET.txt 2>&1 || echo NONE")
+        assert "NET-OK" not in _combined(out)
+    finally:
+        _run(f"rm -f {site}/zzz_probe.pth {ws}/PTH_NET.txt")
+
+
 def test_workspace_is_writable():
     out = _run(f"echo ok > /claub/workspaces/{AGENT}/.sandbox-probe && "
                f"cat /claub/workspaces/{AGENT}/.sandbox-probe && "

