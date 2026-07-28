@@ -3,48 +3,32 @@
 import json
 import os
 import re
-import uuid
-from pathlib import Path
 
 import httpx
 from mcp.server.fastmcp import FastMCP
 
+import monitor_control
+from leetcode_api import (
+    API_URL,
+    LANG_IDS,
+    QUESTION_DETAIL_QUERY,
+    SUBMISSION_LIST_QUERY,
+    SYNCED_CODE_QUERY,
+    UPDATE_SYNCED_CODE_MUTATION,
+)
+from leetcode_api import auth_headers as _auth_headers
+from leetcode_api import fetch_question_id as _resolve_question_id
+from leetcode_api import read_token as _read_token
+from leetcode_api import token_path as _token_path
+
 mcp = FastMCP("leetcode-stats")
 
-API_URL = "https://leetcode.com/graphql"
 DEFAULT_USERNAME = os.environ.get("LEETCODE_USERNAME", "")
-DEFAULT_TOKEN_FILE = "/claub/mcps/leetcode-stats/token.json"
 
 # JWT segment: base64url chars, optional padding. LeetCode's session is a 3-segment JWT.
 _JWT_SEGMENT_RE = re.compile(r"^[A-Za-z0-9_-]+=*$")
 # Django csrftoken: 32 alphanumeric chars.
 _CSRF_RE = re.compile(r"^[A-Za-z0-9]{32}$")
-
-
-def _token_path() -> Path:
-    return Path(os.environ.get("LEETCODE_TOKEN_FILE", DEFAULT_TOKEN_FILE))
-
-
-def _read_token() -> tuple[str, str]:
-    """Read session/csrf from the token file. Raises ValueError on any problem."""
-    path = _token_path()
-    try:
-        data = json.loads(path.read_text())
-    except FileNotFoundError:
-        raise ValueError(
-            f"LeetCode token file not found at {path} — ask the user for fresh "
-            "session/csrf cookies and call update_session"
-        )
-    except json.JSONDecodeError as e:
-        raise ValueError(f"LeetCode token file at {path} is not valid JSON: {e}")
-    session = data.get("session")
-    csrf = data.get("csrf")
-    if not isinstance(session, str) or not isinstance(csrf, str) or not session or not csrf:
-        raise ValueError(
-            f"LeetCode token file at {path} is missing 'session' or 'csrf' — "
-            "call update_session with fresh cookies"
-        )
-    return session, csrf
 
 
 def _validate_session(session: str) -> str | None:
@@ -76,106 +60,6 @@ HEADERS = {
         "Chrome/131.0.0.0 Safari/537.36"
     ),
 }
-
-LANG_IDS = {
-    "cpp": 0, "java": 1, "python": 2, "mysql": 3, "c": 4,
-    "csharp": 5, "javascript": 6, "ruby": 7, "bash": 8, "swift": 9,
-    "golang": 10, "python3": 11, "scala": 12, "kotlin": 13, "mssql": 14,
-    "oraclesql": 15, "rust": 18, "php": 19, "typescript": 20, "racket": 21,
-    "erlang": 22, "elixir": 23, "dart": 24, "pythondata": 25, "postgresql": 28,
-}
-
-def _auth_headers(slug: str) -> dict[str, str]:
-    """Build browser-realistic headers for authenticated LeetCode API requests."""
-    session, csrf = _read_token()
-    return {
-        "accept": "*/*",
-        "accept-language": "en-US,en;q=0.9",
-        "content-type": "application/json",
-        "origin": "https://leetcode.com",
-        "referer": f"https://leetcode.com/problems/{slug}/description/",
-        "user-agent": (
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/146.0.0.0 Safari/537.36"
-        ),
-        "sec-ch-ua": '"Chromium";v="146", "Not-A.Brand";v="24", "Brave";v="146"',
-        "sec-ch-ua-arch": '"arm"',
-        "sec-ch-ua-bitness": '"64"',
-        "sec-ch-ua-mobile": "?0",
-        "sec-ch-ua-model": '""',
-        "sec-ch-ua-platform": '"macOS"',
-        "sec-ch-ua-platform-version": '"15.7.3"',
-        "sec-fetch-dest": "empty",
-        "sec-fetch-mode": "cors",
-        "sec-fetch-site": "same-origin",
-        "sec-gpc": "1",
-        "random-uuid": str(uuid.uuid4()),
-        "cookie": f"LEETCODE_SESSION={session}; csrftoken={csrf}",
-        "x-csrftoken": csrf,
-    }
-
-
-QUESTION_DETAIL_QUERY = """query getQuestionDetail($titleSlug: String!) {
-  question(titleSlug: $titleSlug) {
-    questionId
-  }
-}"""
-
-SYNCED_CODE_QUERY = """query syncedCode($questionId: Int!, $lang: Int!) {
-  syncedCode(questionId: $questionId, lang: $lang) {
-    timestamp
-    code
-  }
-}"""
-
-SUBMISSION_LIST_QUERY = """query submissionList($offset: Int!, $limit: Int!, $questionSlug: String!, $lang: Int, $status: Int) {
-  questionSubmissionList(
-    offset: $offset
-    limit: $limit
-    questionSlug: $questionSlug
-    lang: $lang
-    status: $status
-  ) {
-    lastKey
-    hasNext
-    submissions {
-      id
-      statusDisplay
-      lang
-      langName
-      runtime
-      timestamp
-      memory
-    }
-  }
-}"""
-
-UPDATE_SYNCED_CODE_MUTATION = """mutation updateSyncedCode($code: String!, $lang: Int!, $questionId: Int!) {
-  updateSyncedCode(code: $code, lang: $lang, questionId: $questionId) {
-    ok
-  }
-}"""
-
-
-async def _resolve_question_id(
-    client: httpx.AsyncClient, slug: str, headers: dict[str, str]
-) -> int:
-    """Resolve a problem's title slug to its numeric questionId."""
-    resp = await client.post(
-        API_URL,
-        json={"query": QUESTION_DETAIL_QUERY, "variables": {"titleSlug": slug}},
-        headers=headers,
-        timeout=15,
-    )
-    if resp.status_code in (401, 403):
-        raise ValueError("LeetCode session expired — re-extract cookies from browser")
-    resp.raise_for_status()
-    question = resp.json().get("data", {}).get("question")
-    if question is None:
-        raise ValueError(f"Problem '{slug}' not found")
-    return int(question["questionId"])
-
 
 PROFILE_QUERY = """query getUserProfile($username: String!) {
   allQuestionsCount { difficulty count }
@@ -414,6 +298,54 @@ def update_session(session: str, csrf: str) -> str:
         f"ok — wrote {path} (session len={len(session)}, csrf len={len(csrf)}). "
         "Previous token saved as .prev."
     )
+
+
+@mcp.tool()
+async def start_monitoring(problem: str, language: str = "python3") -> str:
+    """Start recording how the user works through a problem, not just the result.
+
+    Polls their LeetCode cloud-saved editor buffer in the background and writes
+    a timestamped timeline: every distinct save with its diff, the long pauses,
+    and every submission with its verdict. Call this when they say they're
+    starting a problem.
+
+    Only one problem can be monitored at a time. Monitoring survives your own
+    process restarting — it runs detached.
+
+    Args:
+        problem: Problem title slug (e.g. "two-sum")
+        language: Language slug they're solving in. Defaults to "python3".
+
+    Stops on stop_monitoring(), 15 minutes without a code change, or 4 hours.
+    Read the recording with get_monitoring_results().
+    """
+    return await monitor_control.start(problem, language)
+
+
+@mcp.tool()
+def stop_monitoring() -> str:
+    """Stop the active monitoring session and return its timeline.
+
+    Takes no arguments — only one session can be active. Safe to call when
+    nothing is running.
+    """
+    return monitor_control.stop()
+
+
+@mcp.tool()
+def get_monitoring_results(problem: str | None = None) -> str:
+    """Read back a recorded solve as a compact timeline.
+
+    Works on a session that is still running, so you can review progress
+    without stopping the recording first.
+
+    Args:
+        problem: Title slug to look up. Omit for the most recent session.
+
+    Returns the timeline plus the directory path, where snapshots/ holds the
+    full code at each save if you want to diff two points yourself.
+    """
+    return monitor_control.results(problem=problem)
 
 
 if __name__ == "__main__":

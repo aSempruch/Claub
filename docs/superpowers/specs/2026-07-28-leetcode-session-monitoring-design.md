@@ -1,7 +1,28 @@
 # LeetCode Session Monitoring — Design
 
 **Date:** 2026-07-28
-**Status:** Approved pending review
+**Status:** Implemented — 124 unit tests plus an end-to-end run in the `claude-claub` image
+
+> **Implementation notes (2026-07-28).** Two things only showed up once the code
+> ran for real, and both would have shipped broken:
+>
+> 1. **The live API's timestamp types are inconsistent.** `syncedCode.timestamp`
+>    comes back as an `int`; `questionSubmissionList[].timestamp` comes back as a
+>    `str` (and `questionId` is a `str` too). Comparing raw values for dedupe made
+>    a type change look like an edit — a scripted wobble produced **2,879 spurious
+>    snapshots**, each with `lines_added: 0`. All timestamps are now normalised
+>    through `monitor.normalize_ts` at the boundary.
+> 2. **Tagging `argv[0]` defeats CPython's virtualenv detection.** CPython derives
+>    `sys.prefix` from `argv[0]`, so a non-path value made the spawned child fall
+>    back to the system interpreter and lose every third-party import
+>    (`ModuleNotFoundError: No module named 'httpx'`). Since the real deployment
+>    runs under `uv run`, this would have failed identically in production. Fixed
+>    by passing `sys.path` explicitly as `PYTHONPATH`, which keeps the tag.
+>
+> Live-API field types verified against the real endpoint; observed
+> `statusDisplay` values include `Accepted`, `Wrong Answer`, `Runtime Error`, and
+> `Output Limit Exceeded`, confirming failed verdicts are visible and worth
+> recording.
 
 ## Overview
 
@@ -97,10 +118,12 @@ All under `mcps/leetcode-stats/`:
 
 | File | Responsibility |
 | --- | --- |
-| `leetcode_api.py` | Auth headers, GraphQL queries, `_resolve_question_id`. Extracted from `server.py` so the monitor can use it **without importing FastMCP**. |
-| `server.py` | Existing tools plus the three new ones. Never runs a poll loop. |
-| `monitor.py` | The standalone poll loop. Never imported by `server.py` — only ever exec'd. |
+| `leetcode_api.py` | Auth headers, GraphQL queries, `LeetCodeClient`. Extracted from `server.py` so the monitor can use it **without importing FastMCP**. |
+| `server.py` | Existing tools plus the three new ones, as thin wrappers. Never runs a poll loop. |
+| `monitor.py` | The standalone poll loop plus its pure helpers. Never imported by `server.py` — only ever exec'd. |
 | `session_store.py` | Lock acquisition, tag scan, session dir creation, retention pruning, interrupted-session reconciliation. The only module that touches the lock. |
+| `monitor_control.py` | Start/stop/results orchestration, and the spawn and signal seams. Separate from `server.py` so those seams stay injectable for tests without leaking into the MCP tool schema. |
+| `report.py` | Session selection and timeline rendering. |
 
 The `server.py` ↔ `monitor.py` boundary is deliberately a process boundary, not a
 function call. `server.py` spawns and signals; it never polls.

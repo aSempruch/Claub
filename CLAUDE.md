@@ -74,7 +74,7 @@ docker-compose.yml                # Service definition with volumes — ALL dock
 
 mcps/                             # MCP servers baked into the image at /app/mcps/
   git/                            # Workspace-scoped git operations
-  leetcode-stats/                 # LeetCode GraphQL API client
+  leetcode-stats/                 # LeetCode GraphQL client + in-progress solve monitoring
   nextcloud/                      # Nextcloud file sharing via WebDAV
   hass/                           # Home Assistant — narrow typed wrappers
   file-download/                  # Least-privilege URL → workspace fetch
@@ -159,6 +159,21 @@ bridge validates the names and builds the argv itself. The
 `settings.local.json` to escalate. Image built by hand:
 `docker build -t claub-exec docker/exec-sandbox/`. Design:
 `docs/superpowers/specs/2026-07-26-sandboxed-exec-design.md`.
+
+### LeetCode Solve Monitoring
+
+`mcp__leetcode-stats__start_monitoring(problem)` records **how** a problem was solved,
+not just the final code: a detached process polls the LeetCode cloud-saved editor
+buffer and writes a timestamped timeline (every distinct save with its diff, the long
+pauses, every submission verdict) to `leetcode-sessions/` in the agent's workspace,
+mirroring the ICF emulator's session shape. `stop_monitoring()` ends it;
+`get_monitoring_results()` reads it back — including while still running.
+
+The monitor is deliberately **decoupled from agent lifetime** — it survives the agent
+being reaped or restarted. Liveness is a `flock` on a container-local file (the kernel
+releases it on death, so a stale lock cannot exist); identity is an `argv[0]` tag
+matched exactly by a `/proc` scan. One session at a time. Design:
+`docs/superpowers/specs/2026-07-28-leetcode-session-monitoring-design.md`.
 
 ### Lifecycle Hooks
 
