@@ -487,6 +487,21 @@ async def test_webhook_username_plain_when_no_model_anywhere(tmp_path: Path) -> 
     assert await _webhook_username(bot) == "Journalist"
 
 
+# Regression: with discord.py's default wait=False the API 204s on accepting the
+# webhook execution rather than on creating the message, so consecutive chunks of
+# one reply race and can be persisted out of order. On 2026-07-29 a 2-chunk reply
+# reached Discord tail-first, reading as an unrelated message.
+@pytest.mark.asyncio
+async def test_webhook_send_waits_for_message_creation(tmp_path: Path) -> None:
+    bot = _webhook_bot(tmp_path)
+    bot.sessions.get_model.return_value = None
+    webhook = MagicMock()
+    webhook.send = AsyncMock()
+    with patch.object(bot, "_get_or_create_webhook", new=AsyncMock(return_value=webhook)):
+        await bot._webhook_send(MagicMock(), "main", "hi")
+    assert webhook.send.call_args.kwargs["wait"] is True
+
+
 @pytest.mark.asyncio
 async def test_webhook_username_truncated_to_discord_limit(tmp_path: Path) -> None:
     bot = _webhook_bot(tmp_path, agent_model="m" * 100)

@@ -693,7 +693,12 @@ class AssistantBot:
             kwargs["username"] = username[:80]  # Discord webhook username limit
         if agent_config and agent_config.avatar_url:
             kwargs["avatar_url"] = agent_config.avatar_url
-        await webhook.send(**kwargs)
+        # wait=True is load-bearing for chunk ordering: with the default wait=0
+        # Discord 204s on *accepting* the execution, not on creating the message,
+        # so back-to-back chunks race and a long chunk can land after a short one
+        # (2026-07-29: a 2-chunk reply arrived tail-first). wait=True makes each
+        # send resolve only once the message exists, serializing the chunk loop.
+        await webhook.send(wait=True, **kwargs)
 
     def _effective_model(self, agent_name: str) -> str | None:
         """Model the agent's process runs with: override → agent config → global."""
