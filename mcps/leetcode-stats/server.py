@@ -305,9 +305,9 @@ async def start_monitoring(problem: str, language: str = "python3") -> str:
     """Start recording how the user works through a problem, not just the result.
 
     Polls their LeetCode cloud-saved editor buffer in the background and writes
-    a timestamped timeline: every distinct save with its diff, the long pauses,
-    and every submission with its verdict. Call this when they say they're
-    starting a problem.
+    a timestamped timeline: each run of writing or deleting with its diff, the
+    long pauses, and every submission with its verdict. Call this when they say
+    they're starting a problem.
 
     Only one problem can be monitored at a time. Monitoring survives your own
     process restarting — it runs detached.
@@ -341,6 +341,11 @@ def get_monitoring_results(problem: str | None = None) -> str:
 
     Args:
         problem: Title slug to look up. Omit for the most recent session.
+
+    The timeline groups LeetCode's 5-10s autosaves into edit runs, each shown
+    as a diff: WROTE for a stretch of adding, DELETED for a stretch of removing.
+    Read the DELETED runs closely — they are the approaches the solver tried and
+    abandoned, and they are the one thing not recoverable from the final code.
 
     Returns the timeline plus the directory path, where snapshots/ holds the
     full code at each save if you want to diff two points yourself.

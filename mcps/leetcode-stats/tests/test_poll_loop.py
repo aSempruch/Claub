@@ -114,6 +114,46 @@ async def test_unchanged_timestamp_writes_nothing(session):
 
 
 @pytest.mark.asyncio
+async def test_identical_code_under_a_new_timestamp_writes_nothing(session):
+    """LeetCode re-syncs the buffer and bumps the timestamp without the code
+    changing. Recording that costs an event plus a full snapshot file and
+    carries no information — five such saves appeared in a 19-minute session."""
+    client = FakeClient(lambda i: {"timestamp": 100 + i, "code": "a\n"})
+
+    await _run(session, client, FakeClock(), baseline_synced_ts=100, baseline_code="a\n")
+
+    assert events(session, "code_change") == []
+    assert list((session / "snapshots").iterdir()) == []
+
+
+@pytest.mark.asyncio
+async def test_a_timestamp_bump_does_not_keep_the_session_alive(session):
+    """The idle timer tracks work, not sync traffic: if only the timestamp is
+    moving, the solver has stopped and the session must still time out."""
+    client = FakeClient(lambda i: {"timestamp": 100 + i, "code": "a\n"})
+
+    reason = await _run(session, client, FakeClock(), baseline_synced_ts=100,
+                        baseline_code="a\n")
+
+    assert reason == "idle"
+
+
+@pytest.mark.asyncio
+async def test_a_real_edit_after_a_timestamp_bump_is_still_recorded(session):
+    """The skip must not desynchronise change detection."""
+    client = FakeClient(
+        lambda i: {"timestamp": 100 + i, "code": "a\n" if i < 3 else "a\nb\n"}
+    )
+
+    await _run(session, client, FakeClock(), baseline_synced_ts=100, baseline_code="a\n")
+
+    changes = events(session, "code_change")
+    assert len(changes) == 1
+    assert changes[0]["lines_added"] == 1
+    assert (session / "snapshots" / "save-0001.py").read_text() == "a\nb\n"
+
+
+@pytest.mark.asyncio
 async def test_timestamp_type_wobble_is_not_treated_as_an_edit(session):
     """Verified against the live API: syncedCode.timestamp comes back as int
     while submission timestamps come back as str. Normalise, so a type change

@@ -253,7 +253,7 @@ def test_results_renders_the_latest_session(root):
     out = results(root=root)
 
     assert "two-sum" in out
-    assert "0 changes" in out
+    assert "0 saves" in out
 
 
 def test_results_can_select_by_problem(root):

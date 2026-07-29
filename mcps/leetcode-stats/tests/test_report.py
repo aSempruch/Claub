@@ -59,16 +59,60 @@ def test_render_includes_problem_and_stop_reason(tmp_path):
     assert str(d) in out
 
 
-def test_render_shows_diff_counts_per_change(tmp_path):
-    d = _session(tmp_path, "two-sum", dt.datetime(2026, 7, 28, 19, 0), events=[
-        {"type": "code_change", "ts": "2026-07-28T19:01:00", "code_len": 40,
-         "lines_added": 7, "lines_removed": 2, "snapshot_ref": "snapshots/save-0001.py"},
-    ])
+def _save(d, seq, code, ts):
+    """Write a snapshot and the code_change event that points at it."""
+    ref = f"snapshots/save-{seq:04d}.py"
+    (d / ref).write_text(code)
+    append_event(d, {"type": "code_change", "ts": ts, "code_len": len(code),
+                     "lines_added": 0, "lines_removed": 0, "snapshot_ref": ref})
+
+
+def test_render_shows_a_run_with_its_actual_diff(tmp_path):
+    d = _session(tmp_path, "two-sum", dt.datetime(2026, 7, 28, 19, 0))
+    _save(d, 1, "def solve():\n", "2026-07-28T19:01:00")
+    _save(d, 2, "def solve():\n    return 42\n", "2026-07-28T19:01:10")
 
     out = render_timeline(d)
 
-    assert "+7" in out and "-2" in out
-    assert "save-0001.py" in out
+    assert "WROTE" in out
+    assert "+    return 42" in out
+
+
+def test_render_shows_deleted_code_that_is_gone_from_the_final_state(tmp_path):
+    """The one thing unrecoverable from the last snapshot: what was abandoned."""
+    d = _session(tmp_path, "two-sum", dt.datetime(2026, 7, 28, 19, 0))
+    _save(d, 1, "def solve():\n    return brute_force()\n", "2026-07-28T19:01:00")
+    _save(d, 2, "def solve():\n", "2026-07-28T19:01:10")
+
+    out = render_timeline(d)
+
+    assert "DELETED" in out
+    assert "-    return brute_force()" in out
+
+
+def test_byte_identical_saves_do_not_open_a_run(tmp_path):
+    """Sessions recorded before the dedup gate contain saves where LeetCode
+    bumped the sync timestamp without the code changing."""
+    d = _session(tmp_path, "two-sum", dt.datetime(2026, 7, 28, 19, 0))
+    _save(d, 1, "def solve():\n", "2026-07-28T19:01:00")
+    _save(d, 2, "def solve():\n", "2026-07-28T19:01:10")
+    _save(d, 3, "def solve():\n", "2026-07-28T19:01:20")
+
+    out = render_timeline(d)
+
+    assert "1 save in 1 edit run" in out
+
+
+def test_same_length_edit_is_not_treated_as_a_duplicate(tmp_path):
+    """Dedup compares content, not code_len — a substitution can be size-neutral."""
+    d = _session(tmp_path, "two-sum", dt.datetime(2026, 7, 28, 19, 0))
+    _save(d, 1, "x = alpha\n", "2026-07-28T19:01:00")
+    _save(d, 2, "x = gamma\n", "2026-07-28T19:01:10")
+
+    out = render_timeline(d)
+
+    assert "2 saves" in out
+    assert "+x = gamma" in out
 
 
 def test_render_marks_submissions_with_status(tmp_path):
@@ -118,7 +162,7 @@ def test_render_summarises_totals(tmp_path):
 
     out = render_timeline(d)
 
-    assert "2 changes" in out
+    assert "2 saves" in out
     assert "1 submission" in out
 
 
@@ -128,4 +172,4 @@ def test_render_handles_an_empty_session(tmp_path):
 
     out = render_timeline(d)
 
-    assert "0 changes" in out
+    assert "0 saves" in out

@@ -165,6 +165,20 @@ async def run_poll_loop(
             synced_ts = normalize_ts(synced.get("timestamp")) if synced else None
             if synced_ts is not None and synced_ts != last_synced_ts:
                 code = synced.get("code") or ""
+            else:
+                code = None
+
+            if code is not None and code == prev_code:
+                # LeetCode re-synced the buffer without the code changing. The
+                # event and its snapshot would carry no information, and
+                # crucially ``last_change`` must not move: the idle timeout
+                # tracks work, so letting sync traffic refresh it would keep a
+                # session the solver has abandoned alive to the 4h cap,
+                # snapshotting the same bytes the whole way.
+                last_synced_ts = synced_ts
+                code = None
+
+            if code is not None:
                 gap = now - last_change
                 if gap > IDLE_EVENT_GAP:
                     append_event(session_dir, {

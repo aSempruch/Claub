@@ -164,10 +164,19 @@ bridge validates the names and builds the argv itself. The
 
 `mcp__leetcode-stats__start_monitoring(problem)` records **how** a problem was solved,
 not just the final code: a detached process polls the LeetCode cloud-saved editor
-buffer and writes a timestamped timeline (every distinct save with its diff, the long
-pauses, every submission verdict) to `leetcode-sessions/` in the agent's workspace,
+buffer and writes a timestamped timeline (each save with its diff, the long pauses,
+every submission verdict) to `leetcode-sessions/` in the agent's workspace,
 mirroring the ICF emulator's session shape. `stop_monitoring()` ends it;
 `get_monitoring_results()` reads it back — including while still running.
+
+The **render** groups saves into edit runs rather than showing one row per autosave.
+LeetCode autosaves every 5-10s, so a save boundary reflects the sampler, not the
+solver: a run breaks when the sign of the size change flips, giving `WROTE` and
+`DELETED` runs each shown as a real diff. Time-, submission-, and magnitude-based
+segmentation were all tried against recorded sessions and all failed — see the
+module docstring in `mcps/leetcode-stats/report.py`. Deletions matter most: everything
+added and kept is recoverable from the final snapshot, so abandoned approaches are the
+only content lost if the render drops them.
 
 The monitor is deliberately **decoupled from agent lifetime** — it survives the agent
 being reaped or restarted. Liveness is a `flock` on a container-local file (the kernel

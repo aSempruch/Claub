@@ -1,0 +1,74 @@
+{"ts": "2026-07-28T20:33:23", "type": "monitor_start", "session_id": "2026-07-28-2033-design-twitter", "problem": "design-twitter", "question_id": 355, "language": "python3", "baseline_submission_ts": null}
+{"ts": "2026-07-28T20:35:43", "type": "idle", "duration_sec": 139}
+{"ts": "2026-07-28T20:35:43", "type": "code_change", "synced_ts": 1785285340, "code_len": 608, "lines_added": 25, "lines_removed": 0, "snapshot_ref": "snapshots/save-0001.py"}
+{"ts": "2026-07-28T20:35:53", "type": "code_change", "synced_ts": 1785285352, "code_len": 666, "lines_added": 3, "lines_removed": 1, "snapshot_ref": "snapshots/save-0002.py"}
+{"ts": "2026-07-28T20:36:19", "type": "code_change", "synced_ts": 1785285377, "code_len": 675, "lines_added": 1, "lines_removed": 1, "snapshot_ref": "snapshots/save-0004.py"}
+{"ts": "2026-07-28T20:36:30", "type": "code_change", "synced_ts": 1785285389, "code_len": 735, "lines_added": 3, "lines_removed": 1, "snapshot_ref": "snapshots/save-0005.py"}
+{"ts": "2026-07-28T20:36:35", "type": "code_change", "synced_ts": 1785285395, "code_len": 747, "lines_added": 2, "lines_removed": 1, "snapshot_ref": "snapshots/save-0006.py"}
+{"ts": "2026-07-28T20:36:56", "type": "code_change", "synced_ts": 1785285415, "code_len": 797, "lines_added": 3, "lines_removed": 1, "snapshot_ref": "snapshots/save-0007.py"}
+{"ts": "2026-07-28T20:37:01", "type": "code_change", "synced_ts": 1785285418, "code_len": 804, "lines_added": 1, "lines_removed": 1, "snapshot_ref": "snapshots/save-0008.py"}
+{"ts": "2026-07-28T20:37:07", "type": "code_change", "synced_ts": 1785285424, "code_len": 822, "lines_added": 1, "lines_removed": 1, "snapshot_ref": "snapshots/save-0009.py"}
+{"ts": "2026-07-28T20:37:18", "type": "code_change", "synced_ts": 1785285436, "code_len": 877, "lines_added": 2, "lines_removed": 0, "snapshot_ref": "snapshots/save-0010.py"}
+{"ts": "2026-07-28T20:37:28", "type": "code_change", "synced_ts": 1785285446, "code_len": 891, "lines_added": 1, "lines_removed": 1, "snapshot_ref": "snapshots/save-0011.py"}
+{"ts": "2026-07-28T20:37:44", "type": "code_change", "synced_ts": 1785285459, "code_len": 902, "lines_added": 1, "lines_removed": 1, "snapshot_ref": "snapshots/save-0012.py"}
+{"ts": "2026-07-28T20:37:50", "type": "code_change", "synced_ts": 1785285468, "code_len": 901, "lines_added": 1, "lines_removed": 1, "snapshot_ref": "snapshots/save-0013.py"}
+{"ts": "2026-07-28T20:37:55", "type": "code_change", "synced_ts": 1785285474, "code_len": 916, "lines_added": 1, "lines_removed": 1, "snapshot_ref": "snapshots/save-0014.py"}
+{"ts": "2026-07-28T20:38:11", "type": "code_change", "synced_ts": 1785285486, "code_len": 959, "lines_added": 1, "lines_removed": 1, "snapshot_ref": "snapshots/save-0015.py"}
+{"ts": "2026-07-28T20:38:54", "type": "code_change", "synced_ts": 1785285533, "code_len": 968, "lines_added": 1, "lines_removed": 1, "snapshot_ref": "snapshots/save-0017.py"}
+{"ts": "2026-07-28T20:39:32", "type": "code_change", "synced_ts": 1785285567, "code_len": 992, "lines_added": 1, "lines_removed": 1, "snapshot_ref": "snapshots/save-0019.py"}
+{"ts": "2026-07-28T20:39:42", "type": "code_change", "synced_ts": 1785285581, "code_len": 995, "lines_added": 1, "lines_removed": 1, "snapshot_ref": "snapshots/save-0020.py"}
+{"ts": "2026-07-28T20:39:48", "type": "code_change", "synced_ts": 1785285587, "code_len": 996, "lines_added": 1, "lines_removed": 1, "snapshot_ref": "snapshots/save-0021.py"}
+{"ts": "2026-07-28T20:39:58", "type": "code_change", "synced_ts": 1785285595, "code_len": 1009, "lines_added": 1, "lines_removed": 1, "snapshot_ref": "snapshots/save-0022.py"}
+{"ts": "2026-07-28T20:40:08", "type": "code_change", "synced_ts": 1785285603, "code_len": 1040, "lines_added": 1, "lines_removed": 1, "snapshot_ref": "snapshots/save-0023.py"}
+{"ts": "2026-07-28T20:40:20", "type": "code_change", "synced_ts": 1785285619, "code_len": 1039, "lines_added": 1, "lines_removed": 1, "snapshot_ref": "snapshots/save-0024.py"}
+{"ts": "2026-07-28T20:40:36", "type": "code_change", "synced_ts": 1785285631, "code_len": 987, "lines_added": 1, "lines_removed": 1, "snapshot_ref": "snapshots/save-0025.py"}
+{"ts": "2026-07-28T20:41:12", "type": "code_change", "synced_ts": 1785285671, "code_len": 970, "lines_added": 1, "lines_removed": 1, "snapshot_ref": "snapshots/save-0026.py"}
+{"ts": "2026-07-28T20:41:17", "type": "code_change", "synced_ts": 1785285674, "code_len": 968, "lines_added": 1, "lines_removed": 1, "snapshot_ref": "snapshots/save-0027.py"}
+{"ts": "2026-07-28T20:41:23", "type": "code_change", "synced_ts": 1785285679, "code_len": 973, "lines_added": 1, "lines_removed": 1, "snapshot_ref": "snapshots/save-0028.py"}
+{"ts": "2026-07-28T20:41:33", "type": "code_change", "synced_ts": 1785285688, "code_len": 987, "lines_added": 1, "lines_removed": 1, "snapshot_ref": "snapshots/save-0029.py"}
+{"ts": "2026-07-28T20:41:39", "type": "code_change", "synced_ts": 1785285695, "code_len": 1002, "lines_added": 1, "lines_removed": 1, "snapshot_ref": "snapshots/save-0030.py"}
+{"ts": "2026-07-28T20:41:44", "type": "code_change", "synced_ts": 1785285703, "code_len": 971, "lines_added": 1, "lines_removed": 1, "snapshot_ref": "snapshots/save-0031.py"}
+{"ts": "2026-07-28T20:41:50", "type": "code_change", "synced_ts": 1785285709, "code_len": 985, "lines_added": 1, "lines_removed": 1, "snapshot_ref": "snapshots/save-0032.py"}
+{"ts": "2026-07-28T20:41:55", "type": "code_change", "synced_ts": 1785285715, "code_len": 991, "lines_added": 1, "lines_removed": 1, "snapshot_ref": "snapshots/save-0033.py"}
+{"ts": "2026-07-28T20:42:11", "type": "code_change", "synced_ts": 1785285727, "code_len": 1008, "lines_added": 1, "lines_removed": 1, "snapshot_ref": "snapshots/save-0034.py"}
+{"ts": "2026-07-28T20:42:16", "type": "code_change", "synced_ts": 1785285736, "code_len": 1046, "lines_added": 2, "lines_removed": 1, "snapshot_ref": "snapshots/save-0035.py"}
+{"ts": "2026-07-28T20:43:09", "type": "code_change", "synced_ts": 1785285787, "code_len": 1089, "lines_added": 3, "lines_removed": 0, "snapshot_ref": "snapshots/save-0036.py"}
+{"ts": "2026-07-28T20:43:20", "type": "code_change", "synced_ts": 1785285797, "code_len": 1122, "lines_added": 1, "lines_removed": 1, "snapshot_ref": "snapshots/save-0037.py"}
+{"ts": "2026-07-28T20:44:40", "type": "idle", "duration_sec": 80}
+{"ts": "2026-07-28T20:44:40", "type": "code_change", "synced_ts": 1785285878, "code_len": 1139, "lines_added": 1, "lines_removed": 1, "snapshot_ref": "snapshots/save-0038.py"}
+{"ts": "2026-07-28T20:44:56", "type": "code_change", "synced_ts": 1785285893, "code_len": 1174, "lines_added": 2, "lines_removed": 1, "snapshot_ref": "snapshots/save-0039.py"}
+{"ts": "2026-07-28T20:45:01", "type": "code_change", "synced_ts": 1785285898, "code_len": 1176, "lines_added": 2, "lines_removed": 2, "snapshot_ref": "snapshots/save-0040.py"}
+{"ts": "2026-07-28T20:45:12", "type": "code_change", "synced_ts": 1785285907, "code_len": 1216, "lines_added": 3, "lines_removed": 1, "snapshot_ref": "snapshots/save-0041.py"}
+{"ts": "2026-07-28T20:45:17", "type": "code_change", "synced_ts": 1785285916, "code_len": 1217, "lines_added": 1, "lines_removed": 0, "snapshot_ref": "snapshots/save-0042.py"}
+{"ts": "2026-07-28T20:45:44", "type": "code_change", "synced_ts": 1785285940, "code_len": 1238, "lines_added": 1, "lines_removed": 0, "snapshot_ref": "snapshots/save-0044.py"}
+{"ts": "2026-07-28T20:45:49", "type": "code_change", "synced_ts": 1785285946, "code_len": 1255, "lines_added": 1, "lines_removed": 1, "snapshot_ref": "snapshots/save-0045.py"}
+{"ts": "2026-07-28T20:45:54", "type": "code_change", "synced_ts": 1785285950, "code_len": 1256, "lines_added": 1, "lines_removed": 1, "snapshot_ref": "snapshots/save-0046.py"}
+{"ts": "2026-07-28T20:46:05", "type": "code_change", "synced_ts": 1785285962, "code_len": 1255, "lines_added": 1, "lines_removed": 1, "snapshot_ref": "snapshots/save-0047.py"}
+{"ts": "2026-07-28T20:46:15", "type": "code_change", "synced_ts": 1785285971, "code_len": 1284, "lines_added": 1, "lines_removed": 0, "snapshot_ref": "snapshots/save-0048.py"}
+{"ts": "2026-07-28T20:46:21", "type": "code_change", "synced_ts": 1785285979, "code_len": 1324, "lines_added": 2, "lines_removed": 1, "snapshot_ref": "snapshots/save-0049.py"}
+{"ts": "2026-07-28T20:46:47", "type": "code_change", "synced_ts": 1785286004, "code_len": 1337, "lines_added": 1, "lines_removed": 0, "snapshot_ref": "snapshots/save-0050.py"}
+{"ts": "2026-07-28T20:46:53", "type": "code_change", "synced_ts": 1785286009, "code_len": 1349, "lines_added": 1, "lines_removed": 1, "snapshot_ref": "snapshots/save-0051.py"}
+{"ts": "2026-07-28T20:47:14", "type": "code_change", "synced_ts": 1785286033, "code_len": 1391, "lines_added": 2, "lines_removed": 1, "snapshot_ref": "snapshots/save-0052.py"}
+{"ts": "2026-07-28T20:47:24", "type": "code_change", "synced_ts": 1785286041, "code_len": 1405, "lines_added": 1, "lines_removed": 1, "snapshot_ref": "snapshots/save-0053.py"}
+{"ts": "2026-07-28T20:47:40", "type": "code_change", "synced_ts": 1785286056, "code_len": 1445, "lines_added": 2, "lines_removed": 1, "snapshot_ref": "snapshots/save-0054.py"}
+{"ts": "2026-07-28T20:47:45", "type": "code_change", "synced_ts": 1785286065, "code_len": 1471, "lines_added": 1, "lines_removed": 1, "snapshot_ref": "snapshots/save-0055.py"}
+{"ts": "2026-07-28T20:47:51", "type": "code_change", "synced_ts": 1785286069, "code_len": 1476, "lines_added": 1, "lines_removed": 1, "snapshot_ref": "snapshots/save-0056.py"}
+{"ts": "2026-07-28T20:48:07", "type": "code_change", "synced_ts": 1785286085, "code_len": 1482, "lines_added": 2, "lines_removed": 2, "snapshot_ref": "snapshots/save-0057.py"}
+{"ts": "2026-07-28T20:48:38", "type": "code_change", "synced_ts": 1785286113, "code_len": 1487, "lines_added": 1, "lines_removed": 1, "snapshot_ref": "snapshots/save-0059.py"}
+{"ts": "2026-07-28T20:48:49", "type": "code_change", "synced_ts": 1785286129, "code_len": 1489, "lines_added": 2, "lines_removed": 2, "snapshot_ref": "snapshots/save-0060.py"}
+{"ts": "2026-07-28T20:48:59", "type": "code_change", "synced_ts": 1785286139, "code_len": 1501, "lines_added": 2, "lines_removed": 2, "snapshot_ref": "snapshots/save-0061.py"}
+{"ts": "2026-07-28T20:49:26", "type": "submission", "submission_id": "2085421064", "status": "Runtime Error", "lang": "python3", "runtime": "N/A", "memory": "N/A", "submitted_at": 1785286139}
+{"ts": "2026-07-28T20:49:47", "type": "code_change", "synced_ts": 1785286184, "code_len": 1556, "lines_added": 2, "lines_removed": 1, "snapshot_ref": "snapshots/save-0062.py"}
+{"ts": "2026-07-28T20:49:58", "type": "code_change", "synced_ts": 1785286193, "code_len": 1565, "lines_added": 1, "lines_removed": 0, "snapshot_ref": "snapshots/save-0063.py"}
+{"ts": "2026-07-28T20:50:03", "type": "code_change", "synced_ts": 1785286199, "code_len": 1573, "lines_added": 1, "lines_removed": 1, "snapshot_ref": "snapshots/save-0064.py"}
+{"ts": "2026-07-28T20:50:08", "type": "code_change", "synced_ts": 1785286204, "code_len": 1556, "lines_added": 0, "lines_removed": 1, "snapshot_ref": "snapshots/save-0065.py"}
+{"ts": "2026-07-28T20:50:13", "type": "code_change", "synced_ts": 1785286213, "code_len": 1574, "lines_added": 1, "lines_removed": 0, "snapshot_ref": "snapshots/save-0066.py"}
+{"ts": "2026-07-28T20:50:18", "type": "code_change", "synced_ts": 1785286217, "code_len": 1601, "lines_added": 1, "lines_removed": 1, "snapshot_ref": "snapshots/save-0067.py"}
+{"ts": "2026-07-28T20:50:24", "type": "code_change", "synced_ts": 1785286222, "code_len": 1605, "lines_added": 1, "lines_removed": 1, "snapshot_ref": "snapshots/save-0068.py"}
+{"ts": "2026-07-28T20:50:29", "type": "code_change", "synced_ts": 1785286228, "code_len": 1650, "lines_added": 2, "lines_removed": 0, "snapshot_ref": "snapshots/save-0069.py"}
+{"ts": "2026-07-28T20:50:50", "type": "code_change", "synced_ts": 1785286247, "code_len": 1635, "lines_added": 1, "lines_removed": 1, "snapshot_ref": "snapshots/save-0070.py"}
+{"ts": "2026-07-28T20:50:55", "type": "code_change", "synced_ts": 1785286255, "code_len": 1620, "lines_added": 1, "lines_removed": 1, "snapshot_ref": "snapshots/save-0071.py"}
+{"ts": "2026-07-28T20:51:01", "type": "submission", "submission_id": "2085421758", "status": "Wrong Answer", "lang": "python3", "runtime": "N/A", "memory": "N/A", "submitted_at": 1785286259}
+{"ts": "2026-07-28T20:51:37", "type": "code_change", "synced_ts": 1785286295, "code_len": 1521, "lines_added": 0, "lines_removed": 2, "snapshot_ref": "snapshots/save-0072.py"}
+{"ts": "2026-07-28T20:52:04", "type": "submission", "submission_id": "2085421970", "status": "Accepted", "lang": "python3", "runtime": "23 ms", "memory": "29 MB", "submitted_at": 1785286296}
+{"ts": "2026-07-28T20:52:04", "type": "submission", "submission_id": "2085421985", "status": "Accepted", "lang": "python3", "runtime": "16 ms", "memory": "28.9 MB", "submitted_at": 1785286298}

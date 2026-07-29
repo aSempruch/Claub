@@ -1,0 +1,10 @@
+{
+  "session_id": "2026-07-28-1851-lru-cache",
+  "problem": "lru-cache",
+  "question_id": 146,
+  "language": "python3",
+  "started_at": "2026-07-28T18:51:03",
+  "ended_at": "2026-07-28T19:08:36",
+  "stop_reason": "stopped",
+  "baseline_submission_ts": 1785113215
+}
