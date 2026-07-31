@@ -134,7 +134,7 @@ mcps/alpaca/
 | Long-only | always | `sell` allowed only up to current position qty; no short sells |
 | Asset universe | US common stock + ETF, tradable+marginable per Alpaca asset metadata | checked per order |
 | Max position size | 10% of account equity per symbol (at order time) | order rejected with explanatory error |
-| Max orders per day | 3 | counted per calendar day (ET); state in a small JSON file in the server's data dir |
+| Max orders per day | 3 | counted per calendar day (ET); state in a small JSON file in the server's state dir (`/claub/data/alpaca/`, alongside `trades.jsonl`) |
 | Drawdown circuit breaker | equity < 85% of high-water mark → buys blocked, sells allowed | high-water mark persisted; checked per order |
 | Kill switch | `ALPACA_TRADING_DISABLED=1` blocks all order placement | env var |
 | Paper guard | server refuses to start if `ALPACA_PAPER != "true"` unless `ALPACA_LIVE_CONFIRMED=I_UNDERSTAND` is also set | startup check |
@@ -168,11 +168,11 @@ self-assessment. For a requested period it reports:
   history.
 - **Benchmark 1 — SPY total return** over the same period (computed from
   adjusted daily bars).
-- **Benchmark 2 — buy-and-hold of what the agent actually traded**: take the
-  agent's first-acquisition weights and hold them; approximated from the trade
-  journal's recorded entries (the MCP reads the journal file the agent
-  maintains; if absent, falls back to current-position weights with a caveat in
-  the output).
+- **Benchmark 2 — buy-and-hold of what the agent actually bought**: the server
+  appends every successful order to a machine-readable `trades.jsonl` in its
+  state dir; the benchmark replays each buy as if held from fill date to period
+  end (notional-weighted, from adjusted daily closes). Code-owned records — the
+  agent's markdown journal is narrative, never a data source.
 - Delta vs both benchmarks, stated plainly.
 
 The tool's description instructs the agent to include this report in its weekly
