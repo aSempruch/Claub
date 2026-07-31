@@ -106,6 +106,17 @@ class AgentProcess:
         """True when a send_message call is in progress (stream lock held)."""
         return self._lock.locked()
 
+    async def wait_until_idle(self) -> None:
+        """Block until no send_message is in flight.
+
+        Waits on the stream lock, which is FIFO — so this drains the current
+        turn *and* anything already queued behind it. Used before swapping the
+        process out (e.g. applying a ``/model`` change) so a live turn is never
+        killed mid-flight.
+        """
+        async with self._lock:
+            pass
+
     def _build_command(self, session_id: str | None) -> list[str]:
         cmd = [
             "claude",
@@ -323,6 +334,16 @@ class AgentProcess:
         if not self._process or not self._process.stdin or not self._process.stdout:
             raise RuntimeError(f"Agent {self.agent_name} process not started")
         async with self._lock:
+            # The wait for this lock is unbounded — a queued /compact sits
+            # behind a whole turn. In that window the process can be stopped and
+            # replaced (restart-and-retry, /model, the reaper), and writing to a
+            # terminated subprocess's stdin raises BrokenPipeError, which the
+            # bot's restart-and-retry doesn't catch. Surface it as RuntimeError
+            # so the queued message is retried instead of lost.
+            if not self.is_alive:
+                raise RuntimeError(
+                    f"Agent {self.agent_name} process exited while this message was queued"
+                )
             if self._first_message and not raw:
                 now = datetime.now().strftime("%A, %B %d, %Y at %I:%M %p")
                 content = f"[current time: {now}] {content}"

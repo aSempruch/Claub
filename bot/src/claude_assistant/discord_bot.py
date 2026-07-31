@@ -85,6 +85,20 @@ def _ensure_authoring_symlink(workspace: Path, name: str) -> None:
         link.symlink_to(f"../.claude-{name}")
 
 
+def resolve_model(
+    config: AssistantConfig, name: str, override: str | None
+) -> str | None:
+    """Model an agent's process runs with: session override → agent config → global.
+
+    Single source of truth, shared by process construction and the live-process
+    comparison in ``_get_or_start_process``. If those two resolutions drifted, a
+    ``/model`` change could silently never trigger a restart (or trigger one on
+    every message), so they must not be computed independently.
+    """
+    agent_config = config.agents.get(name)
+    return override or (agent_config.model if agent_config else None) or config.model
+
+
 def build_agent_process(
     *,
     name: str,
@@ -102,7 +116,7 @@ def build_agent_process(
     the command construction stays in one place.
     """
     agent_config = config.agents.get(name)
-    model = model_override or (agent_config.model if agent_config and agent_config.model else config.model)
+    model = resolve_model(config, name, model_override)
     effort = (agent_config.effort if agent_config and agent_config.effort else config.effort)
     compact_pct = (agent_config.compact_pct if agent_config and agent_config.compact_pct else config.compact_pct)
     return AgentProcess(
@@ -240,6 +254,9 @@ class AssistantBot:
             if self.sessions.get_model(name):
                 log.warning("Dropping model override for %s after failed start", name)
                 self.sessions.clear_model(name)
+                # start() rebuilds argv from self.model, so the retry below would
+                # otherwise re-pass the --model we just decided was bad.
+                process.model = resolve_model(self.config, name, None)
             if session_id:
                 log.info("Retrying %s without --resume", name)
                 self.sessions.delete(name)
@@ -249,10 +266,25 @@ class AssistantBot:
         return process
 
     async def _get_or_start_process(self, name: str) -> AgentProcess:
-        """Return a live process for the agent, starting one if needed."""
+        """Return a live process for the agent, starting one if needed.
+
+        A ``/model`` change is applied here rather than at command time. The
+        model is a process-start flag, so it takes a restart — but killing the
+        process the moment the command arrives destroys any turn in flight. So
+        the command only records the override, and this compares the live
+        process against it: on a mismatch, drain the current turn, then swap.
+        """
         process = self._processes.get(name)
         if process and process.is_alive:
-            return process
+            wanted = self._effective_model(name)
+            if process.model == wanted:
+                return process
+            log.info(
+                "Model for %s changed (%s → %s), restarting once the current turn drains",
+                name, process.model, wanted,
+            )
+            await process.wait_until_idle()
+            return await self._restart_process(name)
         return await self._start_agent(name)
 
     async def _restart_process(self, name: str) -> AgentProcess:
@@ -517,7 +549,16 @@ class AssistantBot:
             return
 
         log.info("/compact received for %s (chan=%s)", agent_name, message.channel.id)
-        await message.channel.send(f"Compacting `{agent_name}`…")
+        process = self._processes.get(agent_name)
+        if process and process.is_alive and process.busy:
+            # send_message queues on AgentProcess's FIFO stream lock, so the
+            # literal "/compact" lands after the current turn rather than in it.
+            # Say so — otherwise this looks hung for the length of the turn.
+            await message.channel.send(
+                f"`{agent_name}` is mid-turn — compacting when it finishes."
+            )
+        else:
+            await message.channel.send(f"Compacting `{agent_name}`…")
         async with _safe_typing(message.channel):
             try:
                 # raw=True: send the literal "/compact" slash command without the
@@ -567,19 +608,25 @@ class AssistantBot:
         if arg == "reset":
             self.sessions.clear_model(agent_name)
             new = config_model or "CLI default"
-            reply = f"Model reset to `{new}` (was `{previous}`). Takes effect on next message."
+            head = f"Model reset to `{new}` (was `{previous}`)."
         else:
             self.sessions.set_model(agent_name, arg)
-            reply = f"Model set to `{arg}` (was `{previous}`). Takes effect on next message."
+            head = f"Model set to `{arg}` (was `{previous}`)."
 
         log.info("/model for %s: %r", agent_name, arg)
-        self._reaped.add(agent_name)
+        # Deliberately no process teardown here: stopping mid-turn kills the
+        # in-flight message, and because /model also marked the agent reaped,
+        # _send_with_restart re-raised instead of retrying — the reply was lost.
+        # _get_or_start_process notices the model mismatch and restarts once the
+        # current turn drains.
         process = self._processes.get(agent_name)
-        if process:
-            await process.stop()
-            del self._processes[agent_name]
-        self._last_activity.pop(agent_name, None)
-        await message.channel.send(reply)
+        busy = bool(process and process.is_alive and process.busy)
+        when = (
+            "Takes effect after the current turn finishes."
+            if busy
+            else "Takes effect on your next message."
+        )
+        await message.channel.send(f"{head} {when}")
 
     # --- Webhook sending ---
 
@@ -702,11 +749,8 @@ class AssistantBot:
 
     def _effective_model(self, agent_name: str) -> str | None:
         """Model the agent's process runs with: override → agent config → global."""
-        agent_config = self.config.agents.get(agent_name)
-        return (
-            self.sessions.get_model(agent_name)
-            or (agent_config.model if agent_config else None)
-            or self.config.model
+        return resolve_model(
+            self.config, agent_name, self.sessions.get_model(agent_name)
         )
 
     # --- Utilities ---

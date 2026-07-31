@@ -92,6 +92,11 @@ Type these in an agent's Discord channel:
 | `/model {name}` | Switch models (`sonnet`, `opus`, or a full model ID). Persists across `/clear` until reset |
 | `/model reset` | Revert to the `agents.yaml` / CLI default model |
 
+`/clear` and `/stop` take effect immediately, killing any turn in flight — that's the
+point of them. `/compact` and `/model` never do: if the agent is mid-turn, `/compact`
+queues behind it (and says so) and `/model` records the switch, applying it when the
+turn finishes.
+
 ## Tests
 
 ```bash

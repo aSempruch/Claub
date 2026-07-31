@@ -301,21 +301,88 @@ def _model_msg(channel_id: int, content: str) -> MagicMock:
     return msg
 
 
+def _live_process(model: str | None = None, busy: bool = False) -> MagicMock:
+    p = MagicMock()
+    p.stop = AsyncMock()
+    p.wait_until_idle = AsyncMock()
+    p.is_alive = True
+    p.busy = busy
+    p.model = model
+    return p
+
+
 @pytest.mark.asyncio
 async def test_handle_model_set(bot: AssistantBot) -> None:
     bot.sessions.get_model.return_value = None
-    mock_process = MagicMock()
-    mock_process.stop = AsyncMock()
+    mock_process = _live_process()
     bot._processes["main"] = mock_process
 
     msg = _model_msg(100, "/model opus")
     await bot._handle_model(msg)
 
     bot.sessions.set_model.assert_called_with("main", "opus")
-    mock_process.stop.assert_called_once()
-    assert "main" not in bot._processes
     reply = msg.channel.send.call_args.args[0]
     assert "`opus`" in reply
+    assert "next message" in reply
+    # The restart is lazy (_get_or_start_process), so the command tears nothing down.
+    mock_process.stop.assert_not_called()
+    assert bot._processes["main"] is mock_process
+
+
+@pytest.mark.asyncio
+async def test_handle_model_while_busy_leaves_the_turn_alone(bot: AssistantBot) -> None:
+    """Regression: /model used to stop() mid-turn *and* mark the agent reaped, so
+    _send_with_restart re-raised instead of retrying — the in-flight reply was lost."""
+    bot.sessions.get_model.return_value = None
+    mock_process = _live_process(busy=True)
+    bot._processes["main"] = mock_process
+
+    msg = _model_msg(100, "/model opus")
+    await bot._handle_model(msg)
+
+    bot.sessions.set_model.assert_called_with("main", "opus")
+    mock_process.stop.assert_not_called()
+    assert bot._processes["main"] is mock_process
+    assert "main" not in bot._reaped
+    reply = msg.channel.send.call_args.args[0]
+    assert "after the current turn" in reply
+
+
+@pytest.mark.asyncio
+async def test_get_or_start_process_reuses_process_when_model_matches(
+    bot: AssistantBot,
+) -> None:
+    bot.sessions.get_model.return_value = "opus"
+    process = _live_process(model="opus")
+    bot._processes["main"] = process
+
+    with patch.object(bot, "_restart_process", new=AsyncMock()) as restart:
+        assert await bot._get_or_start_process("main") is process
+    restart.assert_not_awaited()
+    process.wait_until_idle.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_get_or_start_process_drains_turn_before_applying_model_change(
+    bot: AssistantBot,
+) -> None:
+    bot.sessions.get_model.return_value = "opus"
+    old = _live_process(model="sonnet", busy=True)  # predates the /model change
+    bot._processes["main"] = old
+    replacement = _live_process(model="opus")
+
+    order: list[str] = []
+    old.wait_until_idle = AsyncMock(side_effect=lambda: order.append("drained"))
+
+    async def _restart(name: str) -> MagicMock:
+        order.append("restarted")
+        return replacement
+
+    with patch.object(bot, "_restart_process", new=AsyncMock(side_effect=_restart)):
+        assert await bot._get_or_start_process("main") is replacement
+
+    # Order is the whole point: restarting before the turn drains is what kills it.
+    assert order == ["drained", "restarted"]
 
 
 @pytest.mark.asyncio
@@ -395,6 +462,26 @@ async def test_handle_compact_surfaces_cli_noop_message(bot: AssistantBot) -> No
         await bot._handle_compact(msg)
     sent = [c.args[0] for c in msg.channel.send.await_args_list]
     assert "Not enough messages to compact." in sent
+
+
+@pytest.mark.asyncio
+async def test_handle_compact_reports_queued_when_busy(bot: AssistantBot) -> None:
+    """Mid-turn /compact queues on the FIFO stream lock — say so rather than
+    posting "Compacting…" and going silent for the length of the turn."""
+    bot._processes["main"] = _live_process(busy=True)
+    msg = MagicMock()
+    msg.channel.id = 100
+    msg.channel.send = AsyncMock()
+    msg.content = "/compact"
+    with patch.object(
+        bot, "_send_with_restart", new=AsyncMock(return_value="")
+    ) as mock_send:
+        await bot._handle_compact(msg)
+
+    sent = [c.args[0] for c in msg.channel.send.await_args_list]
+    assert any("mid-turn" in s for s in sent)
+    assert not any("Compacting `main`" in s for s in sent)
+    mock_send.assert_awaited_once_with("main", "/compact", raw=True)
 
 
 @pytest.mark.asyncio

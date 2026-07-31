@@ -440,6 +440,7 @@ class TestSendMessageRaw:
     def _make_proc(self, workspace: Path) -> tuple[AgentProcess, list[str]]:
         proc = AgentProcess(workspace=workspace, agent_name="testagent")
         proc._process = MagicMock()
+        proc._process.returncode = None  # is_alive: a bare MagicMock reads as exited
         proc._ready.set()
         proc._first_message = True
         written: list[str] = []
@@ -533,6 +534,51 @@ async def test_inactivity_timeout_exempted_while_awaiting_agent_reply(tmp_path):
     )
     result = await process._read_until_result(inactivity_timeout=0.05)
     assert result == "hi"
+
+
+@pytest.mark.asyncio
+async def test_wait_until_idle_blocks_until_turn_finishes(tmp_path):
+    """Draining must observe the FIFO stream lock, not poll `busy`."""
+    process = AgentProcess(workspace=tmp_path)
+    order: list[str] = []
+
+    async def turn() -> None:
+        async with process._lock:
+            await asyncio.sleep(0.05)
+            order.append("turn")
+
+    async def drain() -> None:
+        await process.wait_until_idle()
+        order.append("idle")
+
+    task = asyncio.create_task(turn())
+    await asyncio.sleep(0)  # let the turn take the lock first
+    await asyncio.gather(task, drain())
+    assert order == ["turn", "idle"]
+
+
+@pytest.mark.asyncio
+async def test_wait_until_idle_returns_immediately_when_not_busy(tmp_path):
+    process = AgentProcess(workspace=tmp_path)
+    await asyncio.wait_for(process.wait_until_idle(), timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_send_message_raises_runtime_error_if_process_died_while_queued(tmp_path):
+    """A message queued behind a turn must fail retryably if the process dies.
+
+    Regression: the liveness check happens before the lock wait, which is
+    unbounded. A /compact sitting behind a full turn could wake up on a
+    terminated subprocess and write to closed stdin — BrokenPipeError, which
+    _send_with_restart doesn't catch, so the message was dropped outright.
+    """
+    process = AgentProcess(workspace=tmp_path, agent_name="main")
+    process._ready.set()
+    process._process = SimpleNamespace(
+        stdin=MagicMock(), stdout=MagicMock(), stderr=None, returncode=1
+    )
+    with pytest.raises(RuntimeError, match="exited while this message was queued"):
+        await process.send_message("/compact", raw=True)
 
 
 def test_env_sets_mcp_tool_timeout(tmp_path, monkeypatch):
