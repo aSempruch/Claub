@@ -88,6 +88,7 @@ class AgentProcess:
         self.hook_timeout = hook_timeout
         self._process: asyncio.subprocess.Process | None = None
         self._session_id: str | None = None
+        self._context_pct: float | None = None
         self._lock = asyncio.Lock()
         self._lifecycle_lock = asyncio.Lock()
         self._ready = asyncio.Event()
@@ -176,6 +177,41 @@ class AgentProcess:
 
     def _extract_result(self, event: dict) -> str:
         return event.get("result", "")
+
+    @staticmethod
+    def _context_tokens(usage: dict) -> int:
+        """Tokens occupying the context window, input-only.
+
+        Matches how the CLI's own statusline derives ``used_percentage``:
+        fresh input plus both cache legs, and *not* output tokens.
+        """
+        return (
+            usage.get("input_tokens", 0)
+            + usage.get("cache_creation_input_tokens", 0)
+            + usage.get("cache_read_input_tokens", 0)
+        )
+
+    @staticmethod
+    def _context_window(result_event: dict, model: str | None) -> int | None:
+        """Context window size for `model`, read off the result event's modelUsage.
+
+        The CLI reports the real window per model (200k, or 1M on extended
+        context), so nothing is hardcoded here. Subagents can add entries for
+        other models; prefer the main chain's model and fall back to the
+        largest window reported rather than guessing.
+        """
+        model_usage = result_event.get("modelUsage") or {}
+        if not isinstance(model_usage, dict):
+            return None
+        entry = model_usage.get(model) if model else None
+        if isinstance(entry, dict) and entry.get("contextWindow"):
+            return int(entry["contextWindow"])
+        windows = [
+            int(v["contextWindow"])
+            for v in model_usage.values()
+            if isinstance(v, dict) and v.get("contextWindow")
+        ]
+        return max(windows) if windows else None
 
     def _env(self) -> dict[str, str]:
         env = os.environ.copy()
@@ -273,6 +309,9 @@ class AgentProcess:
         """Start the claude process. Session ID is captured lazily from stream events."""
         async with self._lifecycle_lock:
             self._ready.clear()
+            # A restart re-reads the transcript, so the old reading is stale
+            # until the next turn reports a fresh one.
+            self._context_pct = None
             await self._run_hooks(self.on_start_hooks, phase="on_start")
             cmd = self._build_command(session_id)
             log.info("Starting agent %s: %s", self.agent_name or "unnamed", " ".join(cmd))
@@ -394,6 +433,8 @@ class AgentProcess:
         if not self._process or not self._process.stdout:
             raise RuntimeError("Process not available")
         collected_text: list[str] = []
+        last_usage: dict | None = None
+        last_model: str | None = None
         while True:
             try:
                 line = await asyncio.wait_for(
@@ -426,8 +467,22 @@ class AgentProcess:
                 for block in msg.get("content", []):
                     if block.get("type") == "text" and block.get("text", "").strip():
                         collected_text.append(block["text"].strip())
+                # Context size is whatever the *latest* main-chain call carried.
+                # Subagent messages (parent_tool_use_id set) have their own
+                # context and would misreport ours, so they're skipped.
+                if not event.get("parent_tool_use_id") and msg.get("usage"):
+                    last_usage = msg["usage"]
+                    last_model = msg.get("model")
 
             if self._is_result_event(event):
+                # result.usage is the turn's *cumulative* total across every API
+                # call, which overshoots the window badly on multi-call turns —
+                # the last assistant message is the only live-context source.
+                if last_usage is not None:
+                    window = self._context_window(event, last_model)
+                    if window:
+                        used = self._context_tokens(last_usage)
+                        self._context_pct = 100.0 * used / window
                 result_text = self._extract_result(event)
                 if not collected_text:
                     final = result_text
@@ -446,6 +501,15 @@ class AgentProcess:
     @property
     def session_id(self) -> str | None:
         return self._session_id
+
+    @property
+    def context_pct(self) -> float | None:
+        """Percent of the context window in use as of the last completed turn.
+
+        ``None`` until this process has finished a turn — a fresh or restarted
+        process has no live context reading to report.
+        """
+        return self._context_pct
 
     @property
     def is_alive(self) -> bool:

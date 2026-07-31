@@ -734,9 +734,12 @@ class AssistantBot:
             kwargs["files"] = files
         if agent_config and agent_config.display_name:
             username = agent_config.display_name
-            model = self._effective_model(agent_name)
-            if model:
-                username = f"{username} [{model}]"
+            tag = " · ".join(
+                p for p in (self._effective_model(agent_name),
+                            self._context_tag(agent_name)) if p
+            )
+            if tag:
+                username = f"{username} [{tag}]"
             kwargs["username"] = username[:80]  # Discord webhook username limit
         if agent_config and agent_config.avatar_url:
             kwargs["avatar_url"] = agent_config.avatar_url
@@ -746,6 +749,16 @@ class AssistantBot:
         # (2026-07-29: a 2-chunk reply arrived tail-first). wait=True makes each
         # send resolve only once the message exists, serializing the chunk loop.
         await webhook.send(wait=True, **kwargs)
+
+    def _context_tag(self, agent_name: str) -> str | None:
+        """Context-window usage of the live process, e.g. ``"20%"``.
+
+        ``None`` when the agent has no process or hasn't completed a turn yet,
+        so a first reply is tagged with the model alone rather than a stale 0%.
+        """
+        process = self._processes.get(agent_name)
+        pct = process.context_pct if process else None
+        return None if pct is None else f"{round(pct)}%"
 
     def _effective_model(self, agent_name: str) -> str | None:
         """Model the agent's process runs with: override → agent config → global."""

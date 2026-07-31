@@ -574,6 +574,42 @@ async def test_webhook_username_plain_when_no_model_anywhere(tmp_path: Path) -> 
     assert await _webhook_username(bot) == "Journalist"
 
 
+def _with_context(bot: AssistantBot, pct: float | None) -> AssistantBot:
+    process = MagicMock()
+    process.context_pct = pct
+    bot._processes["main"] = process
+    return bot
+
+
+@pytest.mark.asyncio
+async def test_webhook_username_tags_context_pct(tmp_path: Path) -> None:
+    bot = _with_context(_webhook_bot(tmp_path, agent_model="opus"), 20.4)
+    bot.sessions.get_model.return_value = None
+    assert await _webhook_username(bot) == "Journalist [opus · 20%]"
+
+
+@pytest.mark.asyncio
+async def test_webhook_username_context_pct_without_model(tmp_path: Path) -> None:
+    bot = _with_context(_webhook_bot(tmp_path), 73.6)
+    bot.sessions.get_model.return_value = None
+    assert await _webhook_username(bot) == "Journalist [74%]"
+
+
+@pytest.mark.asyncio
+async def test_webhook_username_omits_context_before_first_turn(tmp_path: Path) -> None:
+    """No reading yet must show as absent, not as a misleading 0%."""
+    bot = _with_context(_webhook_bot(tmp_path, agent_model="opus"), None)
+    bot.sessions.get_model.return_value = None
+    assert await _webhook_username(bot) == "Journalist [opus]"
+
+
+@pytest.mark.asyncio
+async def test_webhook_username_no_live_process(tmp_path: Path) -> None:
+    bot = _webhook_bot(tmp_path, agent_model="opus")
+    bot.sessions.get_model.return_value = None
+    assert await _webhook_username(bot) == "Journalist [opus]"
+
+
 # Regression: with discord.py's default wait=False the API 204s on accepting the
 # webhook execution rather than on creating the message, so consecutive chunks of
 # one reply race and can be persisted out of order. On 2026-07-29 a 2-chunk reply

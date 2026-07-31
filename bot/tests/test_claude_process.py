@@ -396,6 +396,89 @@ class TestReadUntilResult:
         assert "Second part." in result
 
 
+class TestContextPct:
+    """Context-window usage derived from stream events, for the webhook name tag."""
+
+    def _make_proc(self, workspace: Path, lines: list[str]) -> AgentProcess:
+        proc = AgentProcess(workspace=workspace)
+        proc._process = MagicMock()
+        proc._process.stdout = asyncio.StreamReader()
+        proc._process.stdout.feed_data(b"\n".join(l.encode() for l in lines) + b"\n")
+        proc._process.stdout.feed_eof()
+        return proc
+
+    @staticmethod
+    def _assistant(usage: dict, **extra) -> str:
+        msg = {"content": [{"type": "text", "text": "hi"}],
+               "model": "claude-opus-5", "usage": usage}
+        return json.dumps({"type": "assistant", "message": msg, **extra})
+
+    @staticmethod
+    def _result(windows: dict[str, int] | None = {"claude-opus-5": 200000}) -> str:
+        event: dict = {"type": "result", "result": "hi",
+                       # Cumulative turn total — deliberately huge, must be ignored.
+                       "usage": {"input_tokens": 500_000}}
+        if windows is not None:
+            event["modelUsage"] = {m: {"contextWindow": w} for m, w in windows.items()}
+        return json.dumps(event)
+
+    @pytest.mark.asyncio
+    async def test_input_only_formula_over_reported_window(self, workspace: Path) -> None:
+        """Matches the CLI statusline: input + both cache legs, no output tokens."""
+        proc = self._make_proc(workspace, [
+            self._assistant({"input_tokens": 10, "cache_creation_input_tokens": 1_990,
+                             "cache_read_input_tokens": 38_000, "output_tokens": 9_999}),
+            self._result(),
+        ])
+        await proc._read_until_result()
+        assert proc.context_pct == pytest.approx(20.0)
+
+    @pytest.mark.asyncio
+    async def test_uses_last_assistant_not_cumulative_result_usage(self, workspace: Path) -> None:
+        """result.usage sums every API call of the turn and would overshoot wildly."""
+        proc = self._make_proc(workspace, [
+            self._assistant({"input_tokens": 20_000}),
+            self._assistant({"input_tokens": 60_000}),
+            self._result(),
+        ])
+        await proc._read_until_result()
+        assert proc.context_pct == pytest.approx(30.0)
+
+    @pytest.mark.asyncio
+    async def test_subagent_usage_ignored(self, workspace: Path) -> None:
+        """A subagent's context is its own; reporting it would misstate ours."""
+        proc = self._make_proc(workspace, [
+            self._assistant({"input_tokens": 40_000}),
+            self._assistant({"input_tokens": 180_000}, parent_tool_use_id="toolu_1"),
+            self._result(),
+        ])
+        await proc._read_until_result()
+        assert proc.context_pct == pytest.approx(20.0)
+
+    @pytest.mark.asyncio
+    async def test_extended_context_window_read_from_cli(self, workspace: Path) -> None:
+        """1M-context models must not be scored against a hardcoded 200k."""
+        proc = self._make_proc(workspace, [
+            self._assistant({"input_tokens": 100_000}),
+            self._result({"claude-opus-5": 1_000_000}),
+        ])
+        await proc._read_until_result()
+        assert proc.context_pct == pytest.approx(10.0)
+
+    @pytest.mark.asyncio
+    async def test_none_when_window_unknown(self, workspace: Path) -> None:
+        proc = self._make_proc(workspace, [
+            self._assistant({"input_tokens": 40_000}),
+            self._result(None),
+        ])
+        await proc._read_until_result()
+        assert proc.context_pct is None
+
+    @pytest.mark.asyncio
+    async def test_none_before_any_turn_completes(self, workspace: Path) -> None:
+        assert AgentProcess(workspace=workspace).context_pct is None
+
+
 class TestInactivityTimeout:
     """`_read_until_result` should raise if the stream stays silent too long."""
 
