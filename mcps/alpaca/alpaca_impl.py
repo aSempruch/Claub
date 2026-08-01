@@ -4,7 +4,7 @@ Paper vs live is decided here by the `paper` flag — base URLs and everything
 else follow from it. Daily bars use adjustment='all' (splits + dividends) so
 benchmark math is total-return, matching what the account actually earns.
 """
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import (
@@ -55,6 +55,33 @@ def _to_order(raw) -> Order:
     )
 
 
+def _to_portfolio_history(raw) -> PortfolioHistory:
+    # Alpaca pads `equity` with None for points it hasn't priced yet (e.g. an
+    # in-progress bar); `timestamp` has no corresponding gap. Filter as
+    # (timestamp, equity) pairs so the two output lists can never drift apart
+    # — filtering each list separately (as the original code did for equity
+    # only) misaligns every point after the first None.
+    pairs = [(t, e) for t, e in zip(raw.timestamp, raw.equity) if e is not None]
+    return PortfolioHistory(
+        timestamps=[datetime.fromtimestamp(t).date().isoformat() for t, _ in pairs],
+        equity=[float(e) for _, e in pairs],
+    )
+
+
+def _clamped_bars_end(end: str) -> datetime:
+    """Clamp a requested daily-bars `end` to satisfy Alpaca's free-tier
+    15-min-old data rule. Two clamps stack: never later than yesterday (date
+    clamp), and never within 16 minutes of now (buffer clamp). The date
+    clamp alone leaves a near-zero margin shortly after local midnight, when
+    "yesterday's end-of-day" is only minutes in the past.
+    """
+    end_d = min(date.fromisoformat(end), date.today() - timedelta(days=1))
+    return min(
+        datetime.combine(end_d, datetime.max.time(), tzinfo=timezone.utc),
+        datetime.now(timezone.utc) - timedelta(minutes=16),
+    )
+
+
 class AlpacaBroker:
     def __init__(self, api_key: str, secret_key: str, paper: bool):
         self._trading = TradingClient(api_key, secret_key, paper=paper)
@@ -79,12 +106,9 @@ class AlpacaBroker:
                      last=last, as_of=as_of)
 
     def get_daily_bars(self, symbol: str, start: str, end: str) -> list[Bar]:
-        # Free tier requires end >= 15 min old; clamping end to "yesterday" keeps
-        # daily-cadence calls always valid.
-        end_d = min(date.fromisoformat(end), date.today() - timedelta(days=1))
         resp = self._data.get_stock_bars(StockBarsRequest(
             symbol_or_symbols=symbol, timeframe=TimeFrame.Day,
-            start=datetime.fromisoformat(start), end=datetime.combine(end_d, datetime.max.time()),
+            start=datetime.fromisoformat(start), end=_clamped_bars_end(end),
             adjustment="all",
         ))
         return [
@@ -137,7 +161,4 @@ class AlpacaBroker:
     def get_portfolio_history(self, period: str) -> PortfolioHistory:
         h = self._trading.get_portfolio_history(
             GetPortfolioHistoryRequest(period=period, timeframe="1D"))
-        return PortfolioHistory(
-            timestamps=[datetime.fromtimestamp(t).date().isoformat() for t in h.timestamp],
-            equity=[float(e) for e in h.equity if e is not None],
-        )
+        return _to_portfolio_history(h)
