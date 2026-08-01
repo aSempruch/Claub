@@ -2,10 +2,18 @@ import json
 
 import pytest
 
-from broker import Quote
+from broker import Account, Order, Quote
 from tests.fake_broker import FakeBroker
 
 import server
+
+
+def _open_buy(symbol, *, qty=None, notional=None, limit_price=None):
+    return Order(id=f"open-{symbol}", symbol=symbol, side="buy",
+                 order_type="limit" if limit_price else "market", status="new",
+                 qty=qty, notional=notional, limit_price=limit_price,
+                 filled_qty=0.0, filled_avg_price=None,
+                 submitted_at="2026-08-03T14:00:00+00:00")
 
 
 @pytest.fixture
@@ -152,6 +160,69 @@ def test_place_order_rejects_non_positive_sizes(srv):
     out = server.place_order(symbol="SPY", side="buy", order_type="limit",
                               qty=1, limit_price=-5)
     assert out.startswith("REJECTED") and "limit_price" in out
+    assert srv.placed == []
+
+
+def test_disabled_sentinel_file_blocks_all_orders(srv, tmp_path):
+    (tmp_path / "DISABLED").touch()
+    out = server.place_order(symbol="SPY", side="buy", order_type="market", notional=1000.0)
+    assert out.startswith("REJECTED") and "sentinel" in out
+    assert srv.placed == []
+    assert not (tmp_path / "trades.jsonl").exists()
+    assert "DISABLED sentinel file present" in server.get_rails()
+
+
+def test_open_buy_orders_count_against_position_cap(srv):
+    # 12 sh × $500 = $6,000 committed but unfilled (6% of equity); a further
+    # 5% buy would land the symbol past the 10% cap once both fill.
+    srv.open_orders.append(_open_buy("SPY", qty=12.0, limit_price=500.0))
+    out = server.place_order(symbol="SPY", side="buy", order_type="market", notional=5000.0)
+    assert out.startswith("REJECTED") and "max_position_pct" in out
+    assert "open buy orders" in out
+    assert srv.placed == []
+
+
+def test_open_order_in_another_symbol_does_not_count(srv):
+    srv.open_orders.append(_open_buy("AAPL", qty=12.0, limit_price=500.0))
+    out = server.place_order(symbol="SPY", side="buy", order_type="market", notional=5000.0)
+    assert "accepted" in out
+    assert len(srv.placed) == 1
+
+
+def test_get_account_refreshes_high_water_mark(srv, tmp_path):
+    import rails
+    p = tmp_path / "rail_state.json"
+    rails.save_state(p, rails.RailState(date="2026-08-03", orders_today=0,
+                                        high_water_mark=100_000.0))
+    srv.account = Account(equity=120_000.0, cash=60_000.0, buying_power=60_000.0)
+    server.get_account()
+    state, _ = rails.load_state(p, "2026-08-03", rails.RailConfig())
+    assert state.high_water_mark == 120_000.0
+
+
+def test_sell_records_null_notional(srv, tmp_path):
+    from broker import Position
+    srv.positions.append(Position("AAPL", 10, 150.0, 1600.0, 100.0))
+    server.place_order(symbol="AAPL", side="sell", order_type="market", qty=5)
+    row = json.loads((tmp_path / "trades.jsonl").read_text().splitlines()[0])
+    assert row["notional"] is None  # not the 0.0 the sell path uses internally
+    assert row["qty"] == 5
+
+
+def test_limit_buy_by_qty_within_cap_is_accepted(srv):
+    # 19 sh × $500 = $9,500, just inside the $10,000 cap
+    out = server.place_order(symbol="SPY", side="buy", order_type="limit",
+                             qty=19, limit_price=500.0)
+    assert "accepted" in out
+    assert len(srv.placed) == 1
+    assert srv.placed[0].qty == 19 and srv.placed[0].limit_price == 500.0
+
+
+def test_limit_buy_by_qty_just_over_cap_is_rejected(srv):
+    # 21 sh × $500 = $10,500 — proves the estimate really is qty × limit_price
+    out = server.place_order(symbol="SPY", side="buy", order_type="limit",
+                             qty=21, limit_price=500.0)
+    assert out.startswith("REJECTED") and "max_position_pct" in out
     assert srv.placed == []
 
 

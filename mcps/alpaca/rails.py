@@ -34,11 +34,19 @@ def config_from_env(env: dict) -> RailConfig:
         v = env.get(key, "")
         return int(v) if v else default
 
+    def _kill_switch(key: str) -> bool:
+        """Fail *closed* on anything we don't recognise: only an explicit
+        off-word (or an unset/empty value) leaves trading enabled. Someone
+        typing ALPACA_TRADING_DISABLED=yes means to stop trading, and a
+        whitelist of on-words would silently ignore them."""
+        v = env.get(key, "").strip().lower()
+        return bool(v) and v not in ("0", "false", "no", "off")
+
     return RailConfig(
         max_position_pct=_f("ALPACA_MAX_POSITION_PCT", 10.0),
         max_orders_per_day=_i("ALPACA_MAX_ORDERS_PER_DAY", 3),
         drawdown_halt_pct=_f("ALPACA_DRAWDOWN_HALT_PCT", 15.0),
-        trading_disabled=env.get("ALPACA_TRADING_DISABLED", "") in ("1", "true"),
+        trading_disabled=_kill_switch("ALPACA_TRADING_DISABLED"),
     )
 
 
@@ -51,6 +59,7 @@ def check_order(
     est_notional: float,
     state: RailState,
     cfg: RailConfig,
+    pending_buy_exposure: float = 0.0,
 ) -> str | None:
     if cfg.trading_disabled:
         return "rejected by rail kill_switch: trading is disabled (ALPACA_TRADING_DISABLED)"
@@ -90,11 +99,16 @@ def check_order(
                 f"Talk to the user if you believe the halt should be lifted."
             )
 
-    held_value = position.market_value if position else 0.0
+    # Unfilled buy orders are exposure the account has already committed to, so
+    # they count against the cap exactly like shares already held — otherwise
+    # three queued 10% buys stack into a 30% position the moment they fill.
+    held_value = (position.market_value if position else 0.0) + pending_buy_exposure
+    pending = (f" (incl. ${pending_buy_exposure:,.0f} in open buy orders)"
+               if pending_buy_exposure else "")
     cap = account.equity * cfg.max_position_pct / 100
     if held_value + est_notional > cap + 1e-6:
         return (
-            f"rejected by rail max_position_pct: ${held_value:,.0f} held + "
+            f"rejected by rail max_position_pct: ${held_value:,.0f} held{pending} + "
             f"${est_notional:,.0f} new = ${held_value + est_notional:,.0f} would exceed "
             f"{cfg.max_position_pct:.0f}% of equity (${cap:,.0f}) for {req.symbol}"
         )
@@ -104,19 +118,44 @@ def check_order(
 
 # --- state persistence (the only I/O in this module) ---
 import json
+import logging
 import math
 from dataclasses import replace
 from pathlib import Path
 
+log = logging.getLogger("alpaca.rails")
+
+
+def _fail_closed(
+    path: Path, today: str, cfg: RailConfig, problem: str
+) -> tuple[RailState, str]:
+    warning = (
+        f"rail state file {path} is {problem}; order budget treated as exhausted for "
+        f"today and high-water mark re-seeded"
+    )
+    log.warning(warning)
+    return (
+        RailState(date=today, orders_today=cfg.max_orders_per_day, high_water_mark=None),
+        warning,
+    )
+
 
 def load_state(path: Path, today: str, cfg: RailConfig) -> tuple[RailState, str | None]:
-    """Missing file = normal first run. Corrupt file = fail closed for the order
-    counter (budget exhausted today), fail open for the high-water mark (re-seed
-    from current equity) — failing closed there would block buys forever."""
+    """Missing file = normal first run. Corrupt or unreadable file = fail closed
+    for the order counter (budget exhausted today), fail open for the high-water
+    mark (re-seed from current equity) — failing closed there would block buys
+    forever."""
     if not path.exists():
         return RailState(date=today, orders_today=0, high_water_mark=None), None
     try:
         raw = json.loads(path.read_text())
+    except OSError:
+        # Permissions, a directory in the file's place, a bad mount — we cannot
+        # know how many orders today's budget already spent, so spend it all.
+        return _fail_closed(path, today, cfg, "unreadable")
+    except ValueError:
+        return _fail_closed(path, today, cfg, "corrupt")
+    try:
         state = RailState(
             date=str(raw["date"]),
             orders_today=int(raw["orders_today"]),
@@ -124,25 +163,13 @@ def load_state(path: Path, today: str, cfg: RailConfig) -> tuple[RailState, str 
                              else float(raw["high_water_mark"])),
         )
     except (ValueError, KeyError, TypeError):
-        return (
-            RailState(date=today, orders_today=cfg.max_orders_per_day, high_water_mark=None),
-            f"rail state file {path} is corrupt; order budget treated as exhausted for "
-            f"today and high-water mark re-seeded",
-        )
+        return _fail_closed(path, today, cfg, "corrupt")
 
     # Validate semantic correctness
     if state.orders_today < 0:
-        return (
-            RailState(date=today, orders_today=cfg.max_orders_per_day, high_water_mark=None),
-            f"rail state file {path} is corrupt; order budget treated as exhausted for "
-            f"today and high-water mark re-seeded",
-        )
+        return _fail_closed(path, today, cfg, "corrupt")
     if state.high_water_mark is not None and (state.high_water_mark <= 0 or not math.isfinite(state.high_water_mark)):
-        return (
-            RailState(date=today, orders_today=cfg.max_orders_per_day, high_water_mark=None),
-            f"rail state file {path} is corrupt; order budget treated as exhausted for "
-            f"today and high-water mark re-seeded",
-        )
+        return _fail_closed(path, today, cfg, "corrupt")
 
     if state.date != today:
         state = replace(state, date=today, orders_today=0)

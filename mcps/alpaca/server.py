@@ -9,7 +9,9 @@ Requires: ALPACA_API_KEY, ALPACA_SECRET_KEY, ALPACA_PAPER=true (live requires
 ALPACA_LIVE_CONFIRMED=I_UNDERSTAND as a deliberate second switch).
 """
 import json
+import logging
 import os
+import sys
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
@@ -20,6 +22,13 @@ from mcp.server.fastmcp import FastMCP
 import performance
 import rails
 from broker import Broker, OrderRequest
+
+# stdout is the MCP protocol channel, so operator logging goes to stderr, where
+# `docker compose logs` picks it up. Every order, rejection and rollback is
+# logged: the agent's own account of what it did is not an audit trail.
+logging.basicConfig(stream=sys.stderr, level=logging.INFO,
+                    format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+log = logging.getLogger("alpaca.server")
 
 STATE_DIR = Path(os.environ.get("ALPACA_STATE_DIR", "/claub/data/alpaca"))
 RF_ANNUAL = 0.04
@@ -95,6 +104,29 @@ def _fmt_order(o) -> str:
     return f"[{o.id}] {o.side} {size} {o.symbol} ({o.order_type}{price}) — {o.status}{fill}"
 
 
+def _pending_buy_exposure(b: Broker, symbol: str, ref: float | None) -> float:
+    """Dollar exposure of already-open buy orders in `symbol`. These are
+    committed but unfilled, so the position cap must see them — three queued
+    10% buys are a 30% position waiting to happen.
+
+    A qty-sized open *market* order with no reference price contributes 0
+    rather than blocking the check: that combination only exists for an
+    unfilled market order in a symbol with no quote, it is transient, and
+    failing the whole order there would be a worse trade-off than under-
+    counting one order for a few seconds."""
+    exposure = 0.0
+    for o in b.list_open_orders():
+        if o.symbol != symbol or o.side != "buy":
+            continue
+        if o.notional is not None:
+            exposure += o.notional
+        elif o.qty is not None:
+            price = o.limit_price or ref
+            if price:
+                exposure += o.qty * price
+    return exposure
+
+
 def _quote_ref_price(q) -> float | None:
     """Best-available reference price for a market buy's position-cap estimate:
     last trade, then ask, then bid. None (or a non-positive quote) means we
@@ -105,10 +137,23 @@ def _quote_ref_price(q) -> float | None:
     return None
 
 
+def _load_state(cfg: rails.RailConfig) -> tuple[rails.RailState, str | None]:
+    state, warning = rails.load_state(_state_path(), _today(), cfg)
+    if warning:
+        log.warning("rail state: %s", warning)
+    return state, warning
+
+
 @mcp.tool()
 def get_account() -> str:
     """Account equity, cash, and buying power."""
     a = _get_broker().get_account()
+    # Refresh the high-water mark here too, not only on order placement: the
+    # drawdown circuit breaker measures against the peak, and an agent that
+    # checks its account daily but trades weekly would otherwise be measured
+    # against a peak weeks stale.
+    state, _ = _load_state(_cfg())
+    rails.save_state(_state_path(), rails.update_high_water(state, a.equity))
     return (f"equity ${a.equity:,.2f} | cash ${a.cash:,.2f} | "
             f"buying power ${a.buying_power:,.2f}")
 
@@ -171,8 +216,17 @@ def place_order(
     limit_price). Size with qty (shares) or notional (dollars) — sells must use
     qty. Optional stop_loss/take_profit attach bracket exit legs. Hard rails
     apply: long-only, US stocks/ETFs only, max 10% of equity per symbol, max 3
-    orders/day, drawdown circuit breaker. Rejections explain themselves — read
-    the reason before deciding whether to resize or skip."""
+    orders/day, drawdown circuit breaker, and a DISABLED sentinel file in the
+    state dir that stops all placement immediately. Rejections explain
+    themselves — read the reason before deciding whether to resize or skip."""
+    # Sentinel kill switch, checked before anything else: `touch
+    # /claub/data/alpaca/DISABLED` on the host halts trading instantly, with no
+    # container restart and no env edit — the emergency stop reachable while an
+    # agent is mid-session.
+    if (STATE_DIR / "DISABLED").exists():
+        log.warning("order refused: DISABLED sentinel present in %s", STATE_DIR)
+        return "REJECTED: trading disabled by sentinel file (DISABLED in state dir)"
+
     symbol = symbol.upper()
     if side not in ("buy", "sell"):
         return "REJECTED: side must be 'buy' or 'sell'"
@@ -198,6 +252,7 @@ def place_order(
     position = next((p for p in b.get_positions() if p.symbol == symbol), None)
     asset = b.get_asset(symbol)
 
+    ref: float | None = None
     if side == "sell":
         # The sell rail only compares qty against the held position — it never
         # reads est_notional — so skip the quote lookup entirely. Sells must
@@ -215,8 +270,10 @@ def place_order(
                     f"cannot size-check this order — try a limit order")
         est_notional = qty * ref
 
+    pending = _pending_buy_exposure(b, symbol, ref) if side == "buy" else 0.0
+
     cfg = _cfg()
-    state, warning = rails.load_state(_state_path(), _today(), cfg)
+    state, warning = _load_state(cfg)
     state = rails.update_high_water(state, account.equity)
     reason = rails.check_order(
         OrderRequest(symbol=symbol, side=side, order_type=order_type, qty=qty,
@@ -224,10 +281,13 @@ def place_order(
                      stop_loss=stop_loss, take_profit=take_profit),
         account=account, position=position, asset=asset,
         est_notional=est_notional, state=state, cfg=cfg,
+        pending_buy_exposure=pending,
     )
     rails.save_state(_state_path(), state)  # persist HWM/day-rollover even on reject
     prefix = f"WARNING: {warning}\n" if warning else ""
     if reason:
+        log.info("REJECTED %s %s (qty=%s notional=%s): %s",
+                 side, symbol, qty, notional, reason)
         return f"{prefix}REJECTED: {reason}"
 
     # Fail-closed order counting: increment and persist the counter BEFORE
@@ -245,13 +305,22 @@ def place_order(
         rolled_back, _ = rails.load_state(_state_path(), _today(), cfg)
         rolled_back = replace(rolled_back, orders_today=max(0, rolled_back.orders_today - 1))
         rails.save_state(_state_path(), rolled_back)
+        log.error("submit failed for %s %s (qty=%s notional=%s); order counter "
+                  "rolled back to %s: %s", side, symbol, qty, notional,
+                  rolled_back.orders_today, exc)
         return f"{prefix}ERROR: order submission failed: {exc}"
 
+    log.info("PLACED %s %s qty=%s notional=%s limit=%s -> order %s (%s)",
+             side, symbol, qty, notional, limit_price, order.id, order.status)
     _append_trade({
         "ts": datetime.now(ZoneInfo("America/New_York")).isoformat(),
         "fill_date": _today(), "order_id": order.id, "symbol": symbol,
         "side": side, "order_type": order_type, "qty": qty,
-        "notional": notional if notional is not None else est_notional,
+        # Sells are sized in shares and never estimated, so their notional is
+        # genuinely unknown until fill — null, not the 0.0 placeholder the sell
+        # path uses internally, which the benchmark would read as a real number.
+        "notional": (notional if notional is not None
+                     else (est_notional if side == "buy" else None)),
         "limit_price": limit_price,
     })
     remaining = cfg.max_orders_per_day - state.orders_today
@@ -281,7 +350,7 @@ def get_order(order_id: str) -> str:
 
 @mcp.tool()
 def get_portfolio_history(period: str = "1M") -> str:
-    """Daily equity curve. period: 1W|1M|3M|1A|all."""
+    """Daily equity curve. period: 1W|1M|3M|1A."""
     h = _get_broker().get_portfolio_history(period)
     if not h.equity:
         return "No portfolio history yet."
@@ -316,14 +385,16 @@ def get_rails() -> str:
     this when planning trades so you size within the rails instead of tripping
     rejections."""
     cfg = _cfg()
-    state, warning = rails.load_state(_state_path(), _today(), cfg)
+    state, warning = _load_state(cfg)  # read-only: no HWM refresh here
     lines = [
         f"max_position_pct: {cfg.max_position_pct:.0f}% of equity per symbol",
         f"max_orders_per_day: {cfg.max_orders_per_day}",
         f"orders used today: {state.orders_today} of {cfg.max_orders_per_day}",
         f"drawdown_halt_pct: {cfg.drawdown_halt_pct:.0f}% below high-water mark "
         f"(HWM: {state.high_water_mark and f'${state.high_water_mark:,.0f}' or 'not seeded yet'})",
-        f"trading_disabled: {cfg.trading_disabled}",
+        f"trading_disabled: {cfg.trading_disabled}"
+        + (" (DISABLED sentinel file present — all orders refused)"
+           if (STATE_DIR / "DISABLED").exists() else ""),
         "long-only, US stocks/ETFs only, sells by qty within held position",
     ]
     if warning:

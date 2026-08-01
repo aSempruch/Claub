@@ -114,3 +114,26 @@ def test_config_from_env_defaults_and_overrides():
 def test_config_from_env_ignores_empty_strings():
     # compose passes VAR=${VAR:-} — empty must mean "use default"
     assert config_from_env({"ALPACA_MAX_POSITION_PCT": ""}) == RailConfig()
+
+
+def test_kill_switch_fails_closed_on_unexpected_spellings():
+    # Anyone typing any of these meant "stop trading"; a narrow on-word
+    # whitelist would have quietly kept trading enabled.
+    for value in ("True", "TRUE", "yes", "1", "on", " Yes ", "disabled"):
+        cfg = config_from_env({"ALPACA_TRADING_DISABLED": value})
+        assert cfg.trading_disabled is True, value
+
+
+def test_kill_switch_off_words_leave_trading_enabled():
+    for value in ("0", "false", "FALSE", "", "no", "off", "  "):
+        cfg = config_from_env({"ALPACA_TRADING_DISABLED": value})
+        assert cfg.trading_disabled is False, value
+
+
+def test_open_buy_orders_count_toward_position_cap():
+    # 6k already committed in unfilled buys + 5k new = 11k > 10% of 100k
+    reason = check_order(buy(), account=ACCT, position=None, asset=ETF,
+                         est_notional=5_000.0, state=STATE, cfg=CFG,
+                         pending_buy_exposure=6_000.0)
+    assert "max_position_pct" in reason
+    assert "open buy orders" in reason

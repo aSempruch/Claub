@@ -193,6 +193,9 @@ rails live in code, not prompts: long-only, US stocks/ETFs only, max 10% of
 equity per symbol, max 3 orders/day, a drawdown circuit breaker (buys halt >15%
 below the high-water mark), a kill switch (`ALPACA_TRADING_DISABLED=1`), and a
 paper guard (server refuses to start live without `ALPACA_LIVE_CONFIRMED`).
+For an instant stop with no restart and no env edit, `touch
+/claub/data/alpaca/DISABLED` — the server refuses every order while that
+sentinel file exists, and `rm` re-enables.
 `broker.py` is a vendor-agnostic protocol; `alpaca_impl.py` is the only file
 importing the SDK, so a broker swap is one new file. Every order is appended to
 `/claub/data/alpaca/trades.jsonl` by the server; `get_performance_report`

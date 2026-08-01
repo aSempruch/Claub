@@ -45,6 +45,7 @@ AssistantBot (discord.py)
 | [`mcps/nextcloud/`](mcps/nextcloud/) | Nextcloud file sharing via WebDAV with TTL-based ephemeral cleanup (4 tools) |
 | [`mcps/hass/`](mcps/hass/) | Home Assistant — a deliberately narrow allowlist of typed wrappers around specific entities and services (3 tools) |
 | [`mcps/file-download/`](mcps/file-download/) | Least-privilege URL → workspace fetch: SSRF-blocked, size-capped, path-validated (1 tool) |
+| [`mcps/alpaca/`](mcps/alpaca/) | Rail-guarded Alpaca paper trading — position caps, daily order budget, drawdown halt, kill switch, scoreboard vs SPY (12 tools, with tests) |
 
 ## Example Agents
 

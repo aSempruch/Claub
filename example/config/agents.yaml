@@ -38,6 +38,9 @@ agents:
 
   trader:
     channel_id: "YOUR_TRADER_CHANNEL_ID"
+    display_name: "Trader"
+    allowed_tools_additional:
+      - "mcp__alpaca__*"
 
 # Agents in the same group can message each other via
 # mcp__agents__message_agent_{name} (one tool per reachable agent).
