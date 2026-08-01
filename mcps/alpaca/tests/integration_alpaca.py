@@ -41,7 +41,9 @@ def test_place_verify_cancel(broker):
     lowball = round(quote.last * 0.5, 2)
     order = broker.place_order(OrderRequest(
         symbol="SPY", side="buy", order_type="limit", qty=1, limit_price=lowball))
-    assert order.id
-    fetched = broker.get_order(order.id)
-    assert fetched.symbol == "SPY"
-    broker.cancel_order(order.id)
+    try:
+        assert order.id
+        fetched = broker.get_order(order.id)
+        assert fetched.symbol == "SPY"
+    finally:
+        broker.cancel_order(order.id)
