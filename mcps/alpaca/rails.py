@@ -100,3 +100,51 @@ def check_order(
         )
 
     return None
+
+
+# --- state persistence (the only I/O in this module) ---
+import json
+from dataclasses import replace
+from pathlib import Path
+
+
+def load_state(path: Path, today: str, cfg: RailConfig) -> tuple[RailState, str | None]:
+    """Missing file = normal first run. Corrupt file = fail closed for the order
+    counter (budget exhausted today), fail open for the high-water mark (re-seed
+    from current equity) — failing closed there would block buys forever."""
+    if not path.exists():
+        return RailState(date=today, orders_today=0, high_water_mark=None), None
+    try:
+        raw = json.loads(path.read_text())
+        state = RailState(
+            date=str(raw["date"]),
+            orders_today=int(raw["orders_today"]),
+            high_water_mark=(None if raw.get("high_water_mark") is None
+                             else float(raw["high_water_mark"])),
+        )
+    except (ValueError, KeyError, TypeError):
+        return (
+            RailState(date=today, orders_today=cfg.max_orders_per_day, high_water_mark=None),
+            f"rail state file {path} is corrupt; order budget treated as exhausted for "
+            f"today and high-water mark re-seeded",
+        )
+    if state.date != today:
+        state = replace(state, date=today, orders_today=0)
+    return state, None
+
+
+def save_state(path: Path, state: RailState) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps({
+        "date": state.date,
+        "orders_today": state.orders_today,
+        "high_water_mark": state.high_water_mark,
+    }))
+    tmp.replace(path)
+
+
+def update_high_water(state: RailState, equity: float) -> RailState:
+    if state.high_water_mark is None or equity > state.high_water_mark:
+        return replace(state, high_water_mark=equity)
+    return state
