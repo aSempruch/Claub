@@ -44,3 +44,29 @@ def test_update_high_water_rises_never_falls():
         RailState(date="2026-08-03", orders_today=0, high_water_mark=None), 100_000.0
     )
     assert seeded.high_water_mark == 100_000.0
+
+
+def test_negative_orders_today_fails_closed(tmp_path):
+    p = tmp_path / "rail_state.json"
+    p.write_text(json.dumps({
+        "date": "2026-08-03",
+        "orders_today": -5,
+        "high_water_mark": 100_000.0,
+    }))
+    state, warning = load_state(p, "2026-08-03", CFG)
+    assert state.orders_today == CFG.max_orders_per_day  # budget exhausted
+    assert state.high_water_mark is None  # fail open for HWM
+    assert "corrupt" in warning
+
+
+def test_negative_high_water_mark_fails_closed(tmp_path):
+    p = tmp_path / "rail_state.json"
+    p.write_text(json.dumps({
+        "date": "2026-08-03",
+        "orders_today": 1,
+        "high_water_mark": -1.0,
+    }))
+    state, warning = load_state(p, "2026-08-03", CFG)
+    assert state.orders_today == CFG.max_orders_per_day  # budget exhausted
+    assert state.high_water_mark is None  # fail open for HWM
+    assert "corrupt" in warning

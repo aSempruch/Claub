@@ -104,6 +104,7 @@ def check_order(
 
 # --- state persistence (the only I/O in this module) ---
 import json
+import math
 from dataclasses import replace
 from pathlib import Path
 
@@ -128,6 +129,21 @@ def load_state(path: Path, today: str, cfg: RailConfig) -> tuple[RailState, str 
             f"rail state file {path} is corrupt; order budget treated as exhausted for "
             f"today and high-water mark re-seeded",
         )
+
+    # Validate semantic correctness
+    if state.orders_today < 0:
+        return (
+            RailState(date=today, orders_today=cfg.max_orders_per_day, high_water_mark=None),
+            f"rail state file {path} is corrupt; order budget treated as exhausted for "
+            f"today and high-water mark re-seeded",
+        )
+    if state.high_water_mark is not None and (state.high_water_mark <= 0 or not math.isfinite(state.high_water_mark)):
+        return (
+            RailState(date=today, orders_today=cfg.max_orders_per_day, high_water_mark=None),
+            f"rail state file {path} is corrupt; order budget treated as exhausted for "
+            f"today and high-water mark re-seeded",
+        )
+
     if state.date != today:
         state = replace(state, date=today, orders_today=0)
     return state, None
