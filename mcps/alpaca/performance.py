@@ -8,7 +8,7 @@ estimated by the model.
 """
 import math
 
-from broker import Bar
+from broker import Bar, PortfolioHistory
 
 TRADING_DAYS = 252
 
@@ -75,3 +75,52 @@ def buy_and_hold_of_buys(
         weighted += lot_return * row["notional"]
         total += row["notional"]
     return weighted / total if total else None
+
+
+def format_report(
+    history: PortfolioHistory,
+    spy_bars: list[Bar],
+    buys: list[dict],
+    bars_by_symbol: dict[str, list[Bar]],
+    rf_annual: float = 0.04,
+) -> str:
+    """Scoreboard report: agent performance vs SPY and buy-and-hold-of-buys."""
+    agent_tr = total_return(history.equity)
+    rets = daily_returns(history.equity)
+    spy_closes = [b.close for b in spy_bars]
+    spy_tr = total_return(spy_closes)
+    spy_rets = daily_returns(spy_closes)
+    bh_buys = buy_and_hold_of_buys(buys, bars_by_symbol)
+
+    def fmt_sharpe(s):
+        return "n/a (needs more data)" if s is None else f"{s:.2f}"
+
+    delta_spy = agent_tr - spy_tr
+    verdict = "ahead of SPY" if delta_spy >= 0 else "behind SPY"
+
+    lines = [
+        f"Period: {history.timestamps[0]} to {history.timestamps[-1]} "
+        f"({len(history.timestamps)} points)",
+        "",
+        f"Agent:   total return {agent_tr:+.2%} | ann. vol {annualized_vol(rets):.2%} | "
+        f"Sharpe (rf={rf_annual:.0%}) {fmt_sharpe(sharpe(rets, rf_annual))} | "
+        f"max drawdown {max_drawdown(history.equity):.2%}",
+        f"SPY:     total return {spy_tr:+.2%} | ann. vol {annualized_vol(spy_rets):.2%} | "
+        f"Sharpe (rf={rf_annual:.0%}) {fmt_sharpe(sharpe(spy_rets, rf_annual))} | "
+        f"max drawdown {max_drawdown(spy_closes):.2%}",
+        "",
+        f"Verdict: {delta_spy:+.2%} {verdict} over this period.",
+    ]
+    if bh_buys is None:
+        lines.append("Buy-and-hold-of-buys benchmark: no buys recorded yet.")
+    else:
+        delta_bh = agent_tr - bh_buys
+        lines.append(
+            f"Buy-and-hold of everything you bought: {bh_buys:+.2%} "
+            f"(your active management delta: {delta_bh:+.2%})"
+        )
+    lines.append(
+        "Reminder: paper fills are optimistic (no slippage or market impact); "
+        "treat results as logic validation, not proof of edge."
+    )
+    return "\n".join(lines)
