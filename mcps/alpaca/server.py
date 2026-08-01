@@ -70,10 +70,21 @@ def _append_trade(row: dict) -> None:
 
 
 def _read_trades() -> list[dict]:
+    """Skip unparseable lines rather than raising — a torn write (crash mid-append)
+    should drop that one row from the benchmark, not permanently break
+    get_performance_report for every trade recorded before or after it."""
     p = STATE_DIR / "trades.jsonl"
     if not p.exists():
         return []
-    return [json.loads(l) for l in p.read_text().splitlines() if l.strip()]
+    rows = []
+    for line in p.read_text().splitlines():
+        if not line.strip():
+            continue
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return rows
 
 
 def _fmt_order(o) -> str:
@@ -82,6 +93,16 @@ def _fmt_order(o) -> str:
     fill = (f", filled {o.filled_qty} @ {o.filled_avg_price}"
             if o.filled_qty else "")
     return f"[{o.id}] {o.side} {size} {o.symbol} ({o.order_type}{price}) — {o.status}{fill}"
+
+
+def _quote_ref_price(q) -> float | None:
+    """Best-available reference price for a market buy's position-cap estimate:
+    last trade, then ask, then bid. None (or a non-positive quote) means we
+    have nothing trustworthy to size-check against."""
+    for price in (q.last, q.ask, q.bid):
+        if price is not None and price > 0:
+            return price
+    return None
 
 
 @mcp.tool()
@@ -161,6 +182,14 @@ def place_order(
         return "REJECTED: limit orders require limit_price"
     if qty is None and notional is None:
         return "REJECTED: provide qty or notional"
+    if qty is not None and notional is not None:
+        return "REJECTED: provide qty or notional, not both"
+    if qty is not None and qty <= 0:
+        return "REJECTED: qty must be positive"
+    if notional is not None and notional <= 0:
+        return "REJECTED: notional must be positive"
+    if limit_price is not None and limit_price <= 0:
+        return "REJECTED: limit_price must be positive"
     if side == "sell" and qty is None:
         return "REJECTED: sells must be sized with qty (shares), not notional"
 
@@ -168,11 +197,23 @@ def place_order(
     account = b.get_account()
     position = next((p for p in b.get_positions() if p.symbol == symbol), None)
     asset = b.get_asset(symbol)
-    if notional is not None:
+
+    if side == "sell":
+        # The sell rail only compares qty against the held position — it never
+        # reads est_notional — so skip the quote lookup entirely. Sells must
+        # already be tradable (we're closing an existing position) and must
+        # not depend on a quote existing for a symbol we're exiting.
+        est_notional = 0.0
+    elif notional is not None:
         est_notional = notional
+    elif order_type == "limit":
+        est_notional = qty * limit_price
     else:
-        ref = limit_price if order_type == "limit" else (b.get_quote(symbol).last or 0.0)
-        est_notional = (qty or 0.0) * ref
+        ref = _quote_ref_price(b.get_quote(symbol))
+        if ref is None:
+            return (f"REJECTED: no reference price available for {symbol}; "
+                    f"cannot size-check this order — try a limit order")
+        est_notional = qty * ref
 
     cfg = _cfg()
     state, warning = rails.load_state(_state_path(), _today(), cfg)
@@ -189,11 +230,23 @@ def place_order(
     if reason:
         return f"{prefix}REJECTED: {reason}"
 
-    order = b.place_order(OrderRequest(
-        symbol=symbol, side=side, order_type=order_type, qty=qty, notional=notional,
-        limit_price=limit_price, stop_loss=stop_loss, take_profit=take_profit))
+    # Fail-closed order counting: increment and persist the counter BEFORE
+    # submitting, not after. A submit that raises after the broker actually
+    # accepted the order (e.g. a flaky response) must not leave a live order
+    # uncounted — over-counting on a genuine failure is the safe direction,
+    # under-counting on a phantom failure is not.
     state = replace(state, orders_today=state.orders_today + 1)
     rails.save_state(_state_path(), state)
+    try:
+        order = b.place_order(OrderRequest(
+            symbol=symbol, side=side, order_type=order_type, qty=qty, notional=notional,
+            limit_price=limit_price, stop_loss=stop_loss, take_profit=take_profit))
+    except Exception as exc:
+        rolled_back, _ = rails.load_state(_state_path(), _today(), cfg)
+        rolled_back = replace(rolled_back, orders_today=max(0, rolled_back.orders_today - 1))
+        rails.save_state(_state_path(), rolled_back)
+        return f"{prefix}ERROR: order submission failed: {exc}"
+
     _append_trade({
         "ts": datetime.now(ZoneInfo("America/New_York")).isoformat(),
         "fill_date": _today(), "order_id": order.id, "symbol": symbol,
