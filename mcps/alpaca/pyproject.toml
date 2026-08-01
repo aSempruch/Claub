@@ -12,3 +12,4 @@ dev = ["pytest"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+python_files = ["test_*.py", "integration_*.py"]
