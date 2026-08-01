@@ -7,6 +7,7 @@
       "mcp__git__*",
       "mcp__sandbox__*",
       "mcp__nextcloud__*",
+      "mcp__alpaca__*",
       "WebFetch",
       "WebSearch"
     ],

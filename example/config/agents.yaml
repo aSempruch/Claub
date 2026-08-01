@@ -36,6 +36,9 @@ agents:
   #   allowed_skills:
   #     - algorithm-animation
 
+  trader:
+    channel_id: "YOUR_TRADER_CHANNEL_ID"
+
 # Agents in the same group can message each other via
 # mcp__agents__message_agent_{name} (one tool per reachable agent).
 agent_groups:

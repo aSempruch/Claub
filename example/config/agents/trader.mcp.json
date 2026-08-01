@@ -1,0 +1,21 @@
+{
+  "mcpServers": {
+    "playwright": {
+      "type": "http",
+      "url": "http://host.docker.internal:3859/mcp"
+    },
+    "alpaca": {
+      "command": "uv",
+      "args": ["--directory", "/app/mcps/alpaca", "run", "server.py"],
+      "env": {
+        "ALPACA_API_KEY": "${ALPACA_API_KEY}",
+        "ALPACA_SECRET_KEY": "${ALPACA_SECRET_KEY}",
+        "ALPACA_PAPER": "${ALPACA_PAPER}",
+        "ALPACA_TRADING_DISABLED": "${ALPACA_TRADING_DISABLED}",
+        "ALPACA_MAX_POSITION_PCT": "${ALPACA_MAX_POSITION_PCT}",
+        "ALPACA_MAX_ORDERS_PER_DAY": "${ALPACA_MAX_ORDERS_PER_DAY}",
+        "ALPACA_DRAWDOWN_HALT_PCT": "${ALPACA_DRAWDOWN_HALT_PCT}"
+      }
+    }
+  }
+}

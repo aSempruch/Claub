@@ -20,6 +20,7 @@
     "journalist":         { "port": 3847, "user_data_dir": "/Users/you/Library/Application Support/claub-playwright-bridge/profiles/journalist" },
     "career":             { "port": 3848, "user_data_dir": "/Users/you/Library/Application Support/claub-playwright-bridge/profiles/career" },
     "shopping-assistant": { "port": 3849, "user_data_dir": "/Users/you/Library/Application Support/claub-playwright-bridge/profiles/shopping-assistant" },
-    "leetcode-coach":     { "port": 3851, "user_data_dir": "/Users/you/Library/Application Support/claub-playwright-bridge/profiles/leetcode-coach" }
+    "leetcode-coach":     { "port": 3851, "user_data_dir": "/Users/you/Library/Application Support/claub-playwright-bridge/profiles/leetcode-coach" },
+    "trader":             { "port": 3859, "user_data_dir": "/Users/you/Library/Application Support/claub-playwright-bridge/profiles/trader" }
   }
 }

@@ -10,6 +10,15 @@ services:
       - HASS_TOKEN=${HASS_TOKEN}
       - STEAM_API_KEY=${STEAM_API_KEY}
       - NOTION_TOKEN=${NOTION_TOKEN}
+      # Alpaca paper-trading keys for the trader agent's MCP (mcps/alpaca).
+      # Live keys deliberately stay out of the container; see the design spec.
+      - ALPACA_API_KEY=${ALPACA_API_KEY}
+      - ALPACA_SECRET_KEY=${ALPACA_SECRET_KEY}
+      - ALPACA_PAPER=${ALPACA_PAPER:-true}
+      - ALPACA_TRADING_DISABLED=${ALPACA_TRADING_DISABLED:-}
+      - ALPACA_MAX_POSITION_PCT=${ALPACA_MAX_POSITION_PCT:-}
+      - ALPACA_MAX_ORDERS_PER_DAY=${ALPACA_MAX_ORDERS_PER_DAY:-}
+      - ALPACA_DRAWDOWN_HALT_PCT=${ALPACA_DRAWDOWN_HALT_PCT:-}
       # Shared secret for the host-side exec bridge (scripts/exec-bridge).
       # Forwarded from here into the sandbox MCP's env block in the per-agent
       # .mcp.json; never reaches the sandbox container itself.

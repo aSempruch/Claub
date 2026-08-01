@@ -74,6 +74,7 @@ docker-compose.yml                # Service definition with volumes — ALL dock
 
 mcps/                             # MCP servers baked into the image at /app/mcps/
   git/                            # Workspace-scoped git operations
+  alpaca/                         # Rail-guarded Alpaca paper-trading slice for the trader agent
   leetcode-stats/                 # LeetCode GraphQL client + in-progress solve monitoring
   nextcloud/                      # Nextcloud file sharing via WebDAV
   hass/                           # Home Assistant — narrow typed wrappers
@@ -183,6 +184,22 @@ being reaped or restarted. Liveness is a `flock` on a container-local file (the 
 releases it on death, so a stale lock cannot exist); identity is an `argv[0]` tag
 matched exactly by a `/proc` scan. One session at a time. Design:
 `docs/superpowers/specs/2026-07-28-leetcode-session-monitoring-design.md`.
+
+### Trading Agent (paper)
+
+The `trader` agent paper-trades US equities through `mcps/alpaca/` — a narrow,
+rail-guarded slice of Alpaca (12 tools, not the official 60-tool server). Hard
+rails live in code, not prompts: long-only, US stocks/ETFs only, max 10% of
+equity per symbol, max 3 orders/day, a drawdown circuit breaker (buys halt >15%
+below the high-water mark), a kill switch (`ALPACA_TRADING_DISABLED=1`), and a
+paper guard (server refuses to start live without `ALPACA_LIVE_CONFIRMED`).
+`broker.py` is a vendor-agnostic protocol; `alpaca_impl.py` is the only file
+importing the SDK, so a broker swap is one new file. Every order is appended to
+`/claub/data/alpaca/trades.jsonl` by the server; `get_performance_report`
+computes the scoreboard (vs SPY total return and vs buy-and-hold-of-buys) in
+code because the research behind the design found benchmark selection is where
+LLM-trading evaluations fool themselves. Paper→live is a deliberate env flip.
+Design: `docs/superpowers/specs/2026-07-31-trading-agent-design.md`.
 
 ### Lifecycle Hooks
 
