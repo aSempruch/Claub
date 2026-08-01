@@ -34,3 +34,8 @@ def test_report_includes_bh_of_buys_when_present():
     out = format_report(HISTORY, SPY, buys=buys, bars_by_symbol=bars)
     assert "+10.00%" in out           # B&H of buys
     assert "paper fills are optimistic" in out
+
+
+def test_report_handles_empty_history():
+    out = format_report(PortfolioHistory([], []), SPY, buys=[], bars_by_symbol={})
+    assert "No equity history yet." in out

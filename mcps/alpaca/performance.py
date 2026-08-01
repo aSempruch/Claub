@@ -85,6 +85,8 @@ def format_report(
     rf_annual: float = 0.04,
 ) -> str:
     """Scoreboard report: agent performance vs SPY and buy-and-hold-of-buys."""
+    if not history.timestamps or not history.equity:
+        return "No equity history yet."
     agent_tr = total_return(history.equity)
     rets = daily_returns(history.equity)
     spy_closes = [b.close for b in spy_bars]
