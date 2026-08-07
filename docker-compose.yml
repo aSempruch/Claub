@@ -8,6 +8,11 @@ services:
       - NEXTCLOUD_TOKEN=${NEXTCLOUD_TOKEN}
       - HASS_URL=${HASS_URL}
       - HASS_TOKEN=${HASS_TOKEN}
+      # Entity ids the hass MCP watches. Kept in .envrc so personal HASS
+      # entity names stay out of the repo; mcps/hass/server.py has placeholders.
+      - HASS_PERSON_ENTITY=${HASS_PERSON_ENTITY:-}
+      - HASS_TV_ENTITY=${HASS_TV_ENTITY:-}
+      - HASS_PC_ENTITY=${HASS_PC_ENTITY:-}
       - STEAM_API_KEY=${STEAM_API_KEY}
       - NOTION_TOKEN=${NOTION_TOKEN}
       # Alpaca paper-trading keys for the trader agent's MCP (mcps/alpaca).
@@ -32,10 +37,10 @@ services:
       - claude-home:/root/.claude
       - ${CLAUB_DATA_PATH:?Set CLAUB_DATA_PATH in .env}:/claub
       - ${CLAUB_DATA_PATH}:${CLAUB_DATA_PATH}
-      - /Users/you/repos/shared/data:/claub/workspaces/career/shared-data
-      - /Users/you/repos/shared/data:/claub/workspaces/leetcode-coach/shared-data
-      - /Users/you/repos/shared/data:/claub/workspaces/analyst/shared-data
       - /tmp/playwright:/tmp/playwright:ro
+      # Host-specific extras (absolute paths, per-agent data mounts) belong in
+      # an untracked docker-compose.override.yml — Compose merges it
+      # automatically. See docker-compose.override.example.yml.
     init: true
     restart: unless-stopped
     healthcheck:

@@ -6,6 +6,9 @@ This is deliberate: it keeps the surface tight and lets each tool shape its
 response for the agent rather than dumping raw HASS state.
 
 Requires: HASS_URL, HASS_TOKEN.
+
+Entity ids are read from the environment so this file carries no one's personal
+HASS setup: HASS_PERSON_ENTITY, HASS_TV_ENTITY, HASS_PC_ENTITY.
 """
 
 import json
@@ -22,6 +25,14 @@ if not HASS_URL or not HASS_TOKEN:
 
 HEADERS = {"Authorization": f"Bearer {HASS_TOKEN}"}
 HISTORY_MAX_HOURS = 168
+
+# Entities this instance watches. Defaults are placeholders — set the real ids
+# in .envrc so they stay out of the repo.
+# `or` rather than a get() default: compose passes these through as empty
+# strings when unset in .envrc, which would otherwise shadow the fallback.
+PERSON_ENTITY = os.environ.get("HASS_PERSON_ENTITY") or "person.home_owner"
+TV_ENTITY = os.environ.get("HASS_TV_ENTITY") or "media_player.lr_tv"
+PC_ENTITY = os.environ.get("HASS_PC_ENTITY") or "media_player.gaming_pc"
 
 mcp = FastMCP("hass")
 
@@ -64,11 +75,11 @@ async def _call_service(domain: str, service: str, payload: dict) -> None:
 async def get_user_location() -> str:
     """Get the user's current location.
 
-    Returns the zone he's in (e.g. "home", "not_home", or a custom zone name)
+    Returns the zone they're in (e.g. "home", "not_home", or a custom zone name)
     along with GPS coordinates, accuracy in meters, the device tracker that's
     reporting, and when the zone last changed.
     """
-    state = await _get_state("person.home_owner")
+    state = await _get_state(PERSON_ENTITY)
     attrs = state.get("attributes", {})
     return json.dumps(
         {
@@ -87,8 +98,8 @@ async def get_user_location() -> str:
 async def get_user_location_history(hours: int = 24) -> str:
     """Get the user's zone history over the past N hours.
 
-    Returns a list of zone transitions: each entry is the zone he was in and
-    the timestamp he entered it. GPS coordinates are not included in history
+    Returns a list of zone transitions: each entry is the zone they were in
+    and the timestamp they entered it. GPS coordinates are not included in history
     — use get_user_location for the current position.
 
     Args:
@@ -96,7 +107,7 @@ async def get_user_location_history(hours: int = 24) -> str:
     """
     if hours <= 0 or hours > HISTORY_MAX_HOURS:
         return f"hours must be between 1 and {HISTORY_MAX_HOURS}"
-    events = await _get_history("person.home_owner", hours)
+    events = await _get_history(PERSON_ENTITY, hours)
     transitions = [
         {"zone": e.get("state"), "entered_at": e.get("last_changed")}
         for e in events
@@ -109,7 +120,7 @@ async def get_user_location_history(hours: int = 24) -> str:
 
 @mcp.tool()
 async def get_user_screen_activity() -> str:
-    """Check whether the user is watching the living room TV or playing on his gaming PC.
+    """Check whether the user is watching the living room TV or on the gaming PC.
 
     Returns the current state of both screens together so the agent can see at a
     glance whether the user is engaged in entertainment.
@@ -129,8 +140,8 @@ async def get_user_screen_activity() -> str:
     - running_game: title of the currently running game (null when nothing is running)
     - platform: "Steam", "Steam Shortcut", "Custom", etc.
     """
-    tv = await _get_state("media_player.lr_tv")
-    pc = await _get_state("media_player.gaming_pc")
+    tv = await _get_state(TV_ENTITY)
+    pc = await _get_state(PC_ENTITY)
     tv_attrs = tv.get("attributes", {})
     pc_attrs = pc.get("attributes", {})
     return json.dumps(

@@ -26,3 +26,10 @@ CLAUDE.local.md
 token.json
 client_secret.json
 docs/
+
+# Host-specific compose additions (absolute paths, per-agent data mounts).
+docker-compose.override.yml
+
+# Raw container logs — these embed full agent system prompts and whatever the
+# agents were working on at the time. Never commit them.
+incident-logs/

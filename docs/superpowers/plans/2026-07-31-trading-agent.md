@@ -1920,7 +1920,7 @@ performance/weekly.md    # scoreboard snapshots
 ```markdown
 # Trader — Living Config
 
-the user or the agent updates this as focus shifts. Hard rails (in the MCP server)
+The user or the agent updates this as focus shifts. Hard rails (in the MCP server)
 always win over anything here.
 
 ## Universe / watchlist
@@ -1954,7 +1954,7 @@ Then restart the bridge daemon and apply zoom prefs per the `claub-playwright` s
 
 - [ ] **Step 7: Ask the user for keys**
 
-the user creates the paper account at https://app.alpaca.markets/signup (email only),
+The user creates the paper account at https://app.alpaca.markets/signup (email only),
 generates PAPER API keys from the dashboard, and adds to `~/docker/claub/.envrc`:
 
 ```bash

@@ -1,0 +1,12 @@
+# Host-specific compose additions. Copy to docker-compose.override.yml (which
+# is gitignored) and edit — Compose merges it into docker-compose.yml
+# automatically, no -f flag needed.
+#
+# This exists so the tracked compose file stays free of absolute host paths and
+# real agent names. Anything that only makes sense on one machine goes here.
+services:
+  claub:
+    # Extra per-agent data mounts. The source is a path on your host; the
+    # target lands inside that agent's workspace.
+    volumes:
+      - /path/on/host/data:/claub/workspaces/AGENT_NAME/shared-data
